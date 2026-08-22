@@ -1,0 +1,22 @@
+# colcon
+build/
+install/
+log/
+
+# 수집 결과 (용량이 크고 실행마다 달라짐)
+runs/*.csv
+reports/
+collector.log
+
+# 파이썬
+__pycache__/
+*.py[cod]
+
+# 환경 백업 / 대용량
+.venv-backups/
+migration_backup.tar.gz
+*.png
+
+# vast.ai 인스턴스 생성물
+onstart.sh
+ports.log

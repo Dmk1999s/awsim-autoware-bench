@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>autoware_bench</name>
+  <version>0.1.0</version>
+  <description>AWSIM + Autoware 주행을 1회 단위로 기록하는 계측 도구</description>
+  <maintainer email="loik1235@gmail.com">loik1235</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>tier4_metric_msgs</exec_depend>
+  <exec_depend>autoware_adapi_v1_msgs</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

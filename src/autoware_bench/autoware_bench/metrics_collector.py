@@ -1,0 +1,127 @@
+"""주행 1회(경로 설정 → 도착)를 하나의 CSV로 기록한다.
+
+Autoware의 planning_evaluator / control_evaluator가 이미 지표를 실시간 발행하지만
+아무도 그것을 주행 단위로 모아두지 않는다. 이 노드가 그 빈자리를 채운다.
+
+출력은 long format (t, source, name, value) — MetricArray의 지표 이름이 매 메시지마다
+달라질 수 있어 고정 컬럼 CSV는 깨지기 쉽다.
+"""
+
+import csv
+import math
+import time
+from pathlib import Path
+
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
+
+from nav_msgs.msg import Odometry
+from tier4_metric_msgs.msg import MetricArray
+from autoware_adapi_v1_msgs.msg import RouteState
+
+
+def yaw_from_quaternion(q):
+    siny = 2.0 * (q.w * q.z + q.x * q.y)
+    cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+    return math.atan2(siny, cosy)
+
+
+class MetricsCollector(Node):
+    def __init__(self):
+        super().__init__("metrics_collector")
+
+        self.declare_parameter("output_dir", "/workspace/runs")
+        self.output_dir = Path(self.get_parameter("output_dir").value)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        self.csv_file = None
+        self.writer = None
+        self.path = None
+        self.t0 = None
+        self.rows = 0
+
+        self.create_subscription(
+            MetricArray, "/planning/planning_evaluator/metrics",
+            lambda m: self.on_metrics(m, "planning"), 10)
+        self.create_subscription(
+            MetricArray, "/control/control_evaluator/metrics",
+            lambda m: self.on_metrics(m, "control"), 10)
+        self.create_subscription(
+            Odometry, "/localization/kinematic_state", self.on_odom, 10)
+
+        # ADAPI 상태는 TRANSIENT_LOCAL 이라 구독자도 맞춰야 시작 시 현재 값을 받는다
+        latched = QoSProfile(
+            depth=1,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(
+            RouteState, "/api/routing/state", self.on_route_state, latched)
+
+        self.get_logger().info(f"대기 중 — 경로가 설정되면 기록을 시작한다. 출력: {self.output_dir}")
+
+    # ---- 주행 경계 ----
+
+    def on_route_state(self, msg):
+        if msg.state == RouteState.SET and self.writer is None:
+            self.start_run()
+        elif msg.state in (RouteState.ARRIVED, RouteState.UNSET) and self.writer is not None:
+            self.stop_run("도착" if msg.state == RouteState.ARRIVED else "경로 해제")
+
+    def start_run(self):
+        name = time.strftime("run_%Y%m%d_%H%M%S.csv")
+        self.path = self.output_dir / name
+        self.csv_file = self.path.open("w", newline="")
+        self.writer = csv.writer(self.csv_file)
+        self.writer.writerow(["t", "source", "name", "value"])
+        self.t0 = None
+        self.rows = 0
+        self.get_logger().info(f"기록 시작 → {self.path}")
+
+    def stop_run(self, reason):
+        self.csv_file.close()
+        self.get_logger().info(f"기록 종료 ({reason}) — {self.rows}행 → {self.path}")
+        self.csv_file = None
+        self.writer = None
+        self.path = None
+
+    # ---- 기록 ----
+
+    def write(self, stamp, source, name, value):
+        if self.writer is None:
+            return
+        t = stamp.sec + stamp.nanosec * 1e-9
+        if self.t0 is None:
+            self.t0 = t
+        self.writer.writerow([f"{t - self.t0:.3f}", source, name, value])
+        self.rows += 1
+
+    def on_metrics(self, msg, source):
+        for m in msg.metric_array:
+            self.write(msg.stamp, source, m.name, m.value)
+
+    def on_odom(self, msg):
+        p = msg.pose.pose.position
+        self.write(msg.header.stamp, "ego", "x", f"{p.x:.4f}")
+        self.write(msg.header.stamp, "ego", "y", f"{p.y:.4f}")
+        self.write(msg.header.stamp, "ego", "yaw", f"{yaw_from_quaternion(msg.pose.pose.orientation):.6f}")
+        self.write(msg.header.stamp, "ego", "vel", f"{msg.twist.twist.linear.x:.4f}")
+
+
+def main():
+    rclpy.init()
+    node = MetricsCollector()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if node.writer is not None:
+            node.stop_run("중단")
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
