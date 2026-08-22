@@ -18,7 +18,7 @@ from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 
 from nav_msgs.msg import Odometry
 from tier4_metric_msgs.msg import MetricArray
-from autoware_adapi_v1_msgs.msg import RouteState
+from autoware_adapi_v1_msgs.msg import RouteState, VelocityFactorArray
 
 
 def yaw_from_quaternion(q):
@@ -50,6 +50,12 @@ class MetricsCollector(Node):
         self.create_subscription(
             Odometry, "/localization/kinematic_state", self.on_odom, 10)
 
+        # 정지 사유. 모듈별 /planning/planning_factors/* 가 41개 있지만,
+        # ADAPI 가 그것들을 하나로 모아준다 — behavior 에 모듈 이름이 들어온다.
+        self.create_subscription(
+            VelocityFactorArray, "/api/planning/velocity_factors",
+            self.on_velocity_factors, 10)
+
         # ADAPI 상태는 TRANSIENT_LOCAL 이라 구독자도 맞춰야 시작 시 현재 값을 받는다
         latched = QoSProfile(
             depth=1,
@@ -73,7 +79,9 @@ class MetricsCollector(Node):
         name = time.strftime("run_%Y%m%d_%H%M%S.csv")
         self.path = self.output_dir / name
         self.csv_file = self.path.open("w", newline="")
-        self.writer = csv.writer(self.csv_file)
+        # csv 기본 dialect 는 줄바꿈이 \r\n 이다. csv.DictReader 는 알아서 처리하지만
+        # awk·grep 같은 도구는 마지막 필드를 "2\r" 로 읽어 비교가 조용히 실패한다.
+        self.writer = csv.writer(self.csv_file, lineterminator="\n")
         self.writer.writerow(["t", "source", "name", "value"])
         self.t0 = None
         self.rows = 0
@@ -100,6 +108,20 @@ class MetricsCollector(Node):
     def on_metrics(self, msg, source):
         for m in msg.metric_array:
             self.write(msg.stamp, source, m.name, m.value)
+
+    def on_velocity_factors(self, msg):
+        """어느 모듈이 무슨 이유로 세우려 하는지.
+
+        long format 을 유지하려고 모듈 이름을 name 쪽에 넣는다:
+            t, factor, <behavior>/status,   1=접근중 2=정지
+            t, factor, <behavior>/distance, 정지점까지 남은 거리 [m]
+        이렇게 두면 값이 계속 숫자라 기존 분석 코드가 그대로 돌아간다.
+        (detail·sequence 는 문자열이라 지금은 버린다 — 필요해지면 그때 넣는다.)
+        """
+        for f in msg.factors:
+            name = f.behavior or "unknown"
+            self.write(msg.header.stamp, "factor", f"{name}/status", f.status)
+            self.write(msg.header.stamp, "factor", f"{name}/distance", f"{f.distance:.3f}")
 
     def on_odom(self, msg):
         p = msg.pose.pose.position

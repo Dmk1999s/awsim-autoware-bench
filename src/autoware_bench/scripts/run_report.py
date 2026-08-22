@@ -48,6 +48,29 @@ def get(series, source, name):
     return series.get((source, name), (np.array([]), np.array([])))
 
 
+def blamed_modules(series, t0, t1):
+    """[t0, t1] 구간에서 STOPPED(2) 를 낸 모듈들을 (이름, 최소거리) 로 돌려준다.
+
+    수집기가 `<모듈>/status` 와 `<모듈>/distance` 로 나눠 기록하므로 이름은 키에서 뽑는다.
+    """
+    out = []
+    for (src, name), (t, v) in series.items():
+        if src != "factor" or not name.endswith("/status"):
+            continue
+        mod = name[: -len("/status")]
+        sel = (t >= t0 - 0.5) & (t <= t1 + 0.5) & (v == 2)
+        if not sel.any():
+            continue
+        td, d = series.get(("factor", f"{mod}/distance"), (np.array([]), np.array([])))
+        near = ""
+        if len(d):
+            dsel = (td >= t0 - 0.5) & (td <= t1 + 0.5)
+            if dsel.any():
+                near = f" ({d[dsel].min():.1f} m)"
+        out.append(f"`{mod}`{near}")
+    return ", ".join(out)
+
+
 def stop_events(t, vel):
     """정지 구간을 (시작, 끝) 목록으로. 어느 모듈이 세웠는지는 이 CSV에 없다."""
     stopped = vel < STOP_VEL
@@ -104,7 +127,8 @@ def summarize(series, path):
     mid = [e for e in events if e[0] > 0.01 and e[1] < duration - 0.01]
     L += ["", f"## 정지 이벤트 (총 {len(events)}회 · 주행 중 {len(mid)}회)", ""]
     if events:
-        L += ["| # | 시작 | 종료 | 지속 | 성격 | 그때 최근접 객체 |", "|---|---|---|---|---|---|"]
+        L += ["| # | 시작 | 종료 | 지속 | 성격 | 세운 모듈 | 그때 최근접 객체 |",
+              "|---|---|---|---|---|---|---|"]
         for i, (s, e) in enumerate(events, 1):
             near = f"{obj[np.argmin(np.abs(t_o - s))]:.1f} m" if len(t_o) else "—"
             if s <= 0.01:
@@ -113,12 +137,17 @@ def summarize(series, path):
                 kind = "도착 정지"
             else:
                 kind = "**주행 중 정지**"
-            L += [f"| {i} | {s:.2f} s | {e:.2f} s | {e-s:.2f} s | {kind} | {near} |"]
+            why = blamed_modules(series, s, e) or "—"
+            L += [f"| {i} | {s:.2f} s | {e:.2f} s | {e-s:.2f} s | {kind} | {why} | {near} |"]
     else:
         L += ["없음 (전 구간 주행)."]
-    L += ["",
-          "> 어느 모듈이 왜 세웠는지는 이 CSV에 없다 — `/planning/velocity_factors`를",
-          "> metrics_collector가 아직 구독하지 않기 때문. 위 표는 속도만 보고 추정한 것이다.", ""]
+    mods = sorted({n.split("/")[0] for (src, n) in series if src == "factor"})
+    if mods:
+        L += ["", f"이 주행에서 감속·정지를 요청한 모듈: {', '.join('`'+m+'`' for m in mods)}",
+              "(`/api/planning/velocity_factors` 기준. 「세운 모듈」 열은 그 구간에 STOPPED 를 낸 것만 적는다.)", ""]
+    else:
+        L += ["", "> 정지 사유 데이터 없음 — 수집기가 `/api/planning/velocity_factors` 를", 
+              "> 구독하기 전에 기록된 CSV다.", ""]
     return "\n".join(L), events
 
 
