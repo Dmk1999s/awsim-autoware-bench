@@ -11,17 +11,23 @@
 - [x] `autoware_bench` 패키지 뼈대 + colcon 빌드
 - [x] `metrics_collector` — 주행 1회를 CSV로 기록 (경로 SET→ARRIVED 자동 감지)
 - [x] 실주행 1회 검증 — 36,918행 / 94지표 / 38.5초
-- [ ] **`run_report.py`** — 실측 데이터를 보고 설계
-  - 속도 프로파일 (t vs vel), 경로 추적 (x-y), 횡편차 시계열, jerk 분포
-  - 정지 이벤트 타임라인 — 어느 모듈이 언제 왜 세웠는지
+- [x] **`run_report.py`** — `src/autoware_bench/scripts/run_report.py`
+  - 6분할 그림: 속도 프로파일, 경로(x-y, 속도 색), 횡편차, 저크 시계열·분포, 최근접 객체 거리
+  - 요약 표: 시간·거리·속도·횡편차(max/p95/RMS)·저크(max/p95)·목표 도착 오차
+  - 정지 구간을 **출발 대기 / 도착 정지 / 주행 중 정지**로 구분
+  - 3회차 CSV로 검증 — 91.0 m, 38.54 s, |횡편차| max 3.5 cm, 주행 중 정지 0회
+- [ ] **정지 사유 수집** — "어느 모듈이 왜 세웠는지"는 `/planning/velocity_factors`에 있고
+      `metrics_collector`가 아직 구독하지 않는다. STEP 6 실험 전에 추가해야 함
+      (메시지 타입 확인은 Autoware 재설치 후 가능)
 - [ ] **`criteria.yaml` + 판정** — 임계값은 3회 이상 주행 데이터를 본 뒤 정한다.
       근거 없는 숫자를 먼저 박지 않기 위함
 - [ ] 회차 간 비교 — "이번 주행이 지난번보다 나아졌나"에 답하기
 
 **남은 정리**
 
-- [ ] `.gitignore` — `build/`, `install/`, `log/`, `runs/*.csv`, `collector.log` 제외
-- [ ] GitHub 저장소 생성 후 초기 커밋
+- [x] `.gitignore` — `build/`, `install/`, `log/`, `runs/*.csv`, `reports/`, `collector.log` 제외
+- [x] 로컬 git 초기 커밋 (`697d265`)
+- [ ] GitHub 저장소 생성 후 push
 
 ---
 
