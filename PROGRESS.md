@@ -1,7 +1,9 @@
 # PROGRESS
 
 AWSIM Labs 1.6.1 + Autoware 1.9.0 (ROS 2 Humble) 가상 도심 자율주행 개인 프로젝트.
-실행 환경: vast.ai GPU 컨테이너 (RTX 5080 16GB / Ryzen 7 7700 16코어 / 64GB), MacBook에서 SSH·VS Code로 접속.
+실행 환경: vast.ai GPU 컨테이너, MacBook에서 SSH·VS Code로 접속.
+2026-08-22 인스턴스 교체로 사양이 바뀌었다 — 현재 **RTX 3090 24GB / 12코어 / 62GB** (이전 RTX 5080 16GB / 16코어 / 64GB).
+이전 사양 기준으로 적힌 수치(47 fps, NDT 8.4 Hz 등)는 직접 비교 대상이 아니다.
 
 ---
 
@@ -186,3 +188,89 @@ PROGRESS의 「인프라 개선」에 적혀 있듯 원래도 `:20`에는 AWSIM�
 
 KR 이전의 근거였던 Internet 요금 월 $515는 이번 수정으로 **월 약 $20**이 됐다.
 남은 이전 근거는 디스크 요금($150 → $10)뿐이며 급하지 않다. JP 유지 판단 유효.
+
+
+---
+
+## 2026-08-22 · 인스턴스 교체 → 전면 재설치
+
+인스턴스가 `48174399` → `48401420`으로 **교체**됐다. GPU도 RTX 5080 → **RTX 3090 24GB**,
+CPU 16코어 → 12코어. 살아남은 것은 `/workspace` 뿐이고 스택은 전부 사라졌다 —
+`/opt/ros`, `/root/autoware`, `/root/awsim`, `/root/cyclonedds.xml`, `/root/start_*.sh`,
+그리고 **`migration_backup.tar.gz`까지**.
+
+`df` 상 `/workspace`는 `/`와 같은 overlay다. 별도 볼륨이 아니므로 이번에 남은 것은
+vast.ai가 복사해준 결과지 보장된 동작이 아니다. **실질적 백업은 git push뿐이다.**
+
+### 재설치 구성
+
+| | |
+|---|---|
+| Autoware | 1.9.0 (`10718787`) · 488 패키지 · 빌드 1시간 13분 · 실패 0 |
+| AWSIM Labs | v1.6.1 바이너리 |
+| 지도 | `tier4/AWSIM v1.1.0` 의 `nishishinjuku_autoware_map` |
+| ML 모델 | 3.7GB (`--download-artifacts`) |
+
+재현 스크립트는 `/workspace/scripts/` 에 두었다 (`/root` 는 다시 사라진다).
+
+### 이 컨테이너에서 새로 물린 것 5가지
+
+전부 로그만 보면 엉뚱한 곳을 가리킨다.
+
+| # | 증상 | 실제 원인 | 조치 |
+|---|---|---|---|
+| 1 | `setup-dev-env.sh` 가 `No module named pipx` 로 죽음 | `/venv/main` 이 `python3` 를 가로챔. apt 가 깐 pipx 는 시스템 파이썬에만 있다 | PATH 에서 venv 제거 |
+| 2 | ansible 이 CUDA 역할에서 멈춤 → **TensorRT·ML 모델이 통째로 미설치** | NVIDIA 컨테이너 런타임이 `/etc/vulkan/icd.d/nvidia_icd.json` 을 **읽기 전용 마운트**. ansible 이 덮어쓰려다 실패하고 플레이북 전체가 중단 | 그 태스크만 `failed_when: false`. 런타임이 넣어준 파일이 드라이버(580.159.03)에 맞는 최신본이고 `vulkaninfo` 로 RTX 3090 인식 확인 |
+| 3 | ansible 마지막 태스크가 `rsync 없음` 으로 실패 | 패키지는 설치돼 있는데 **`/usr/bin/rsync` 가 0바이트**로 비워져 있다 (이미지 생성 시각 기준) | `apt-get install --reinstall rsync` |
+| 4 | **ROS 노드가 하나도 안 뜸 (토픽 0개)** | `cyclonedds.xml` 의 `<SocketReceiveBufferSize min="10MB"/>`. `/proc/sys` 가 읽기 전용이라 `net.core.rmem_max` 를 못 올리고, CycloneDDS 는 min 을 못 맞추면 **경고가 아니라 오류로 도메인 생성을 거부**한다 | `min="400000B"` (커널 허용치 425984 아래) |
+| 5 | `map_hash_generator` 사망 (`No module named numpy`) | 기동 스크립트가 venv 를 안 벗겨 파이썬 노드가 venv 파이썬을 탐. **기존 진단 #3 의 재발** | 기동 스크립트 전부에 venv 제거 |
+
+**4번이 이번의 결정타.** 공식 문서 설정을 그대로 쓰면 노드가 한 개도 안 뜬다.
+2번은 조용히 지나가서 더 위험하다 — 플레이북이 중단돼도 앞부분은 성공해 보이므로,
+TensorRT 와 ML 모델이 빠진 줄 모르고 넘어가기 쉽다.
+
+부수: ML 모델이 이번엔 **평면 레이아웃**으로 받아져, 이전에 심볼릭 링크로 우회했던 문제는 재현되지 않았다.
+
+### AWSIM 자동 시작 해결
+
+이전에 "GUI 클릭 없이는 시작되지 않는다 / `--json_path` 실패"로 남겨둔 항목을 `xdotool` 로 자동화했다.
+
+```bash
+DISPLAY=:20 xdotool search --name "AWSIM Labs" | tail -1   # 윈도우 ID
+DISPLAY=:20 xdotool mousemove 1394 937 click 1            # Load 버튼
+```
+
+### 재설치 검증 (2026-08-22 03:57 KST)
+
+```
+AWSIM        53 fps, RTX 3090
+Autoware     186 노드 / 764 토픽, 사망 프로세스 0
+Localization Initialized (state 3), NDT 6.9 Hz
+Perception   객체 9.2 Hz, 신호등 17.8 Hz
+대역폭       eth0 0.10 Mbps ($0.002/hr), lo 1,217 Mbps
+```
+
+주행 1회를 ADAPI 로 실행해 끝까지 확인했다 (RViz 클릭 없이 CLI 만으로):
+
+```bash
+ros2 service call /api/routing/set_route_points autoware_adapi_v1_msgs/srv/SetRoutePoints \
+  "{header: {frame_id: map}, option: {allow_goal_modification: true}, \
+    goal: {position: {x: 81470.3, y: 49980.1, z: 41.5}, \
+           orientation: {z: 0.29552, w: 0.95534}}, waypoints: []}"
+ros2 service call /api/operation_mode/change_to_autonomous \
+  autoware_adapi_v1_msgs/srv/ChangeOperationMode "{}"
+```
+
+| | |
+|---|---|
+| 구간 | (81380.6, 49918.7) → (81470.3, 49980.1) |
+| 결과 | **Arrived** · 109.3 m · 114.4 s |
+| 목표 도착 오차 | 종 **10.5 cm** · 횡 0.1 cm · 방위 0.016 rad |
+| 주행 중 정지 | 5회 (최장 21.2 s) |
+| 수집 | 115,216행 → `runs/run_20260822_185332.csv` |
+
+이전 인스턴스 대비 NDT 8.4 → 6.9 Hz, AWSIM 47 → 53 fps. GPU·CPU 사양이 달라졌으므로 직접 비교는 아니다.
+
+**주행 중 정지 5회는 이번 리포트가 답하지 못하는 부분이다** — 어느 모듈이 왜 세웠는지는
+`/planning/velocity_factors` 에 있고 수집기가 아직 구독하지 않는다. 42~63초의 21초 정지는
+신호 대기로 추정되지만 추정일 뿐이다. STEP 6 실험 전에 반드시 채워야 한다.

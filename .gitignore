@@ -20,3 +20,6 @@ migration_backup.tar.gz
 # vast.ai 인스턴스 생성물
 onstart.sh
 ports.log
+
+# Claude Code 세션 파일
+.claude/

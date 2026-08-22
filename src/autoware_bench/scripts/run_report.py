@@ -128,7 +128,9 @@ def figures(series, events, out_png):
     _, y = get(series, "ego", "y")
     t_p, vtgt = get(series, "planning", "velocity/mean")
     t_l, lat = get(series, "control", "lateral_deviation")
-    _, latc = get(series, "control", "lateral_deviation_centerline")
+    # 시간축을 공유하지 않는다 — MetricArray 는 메시지마다 담기는 지표가 달라
+    # 두 계열의 표본 수가 어긋날 수 있다 (실측: 1097 vs 1144).
+    t_lc, latc = get(series, "control", "lateral_deviation_centerline")
     t_j, jerk = get(series, "control", "jerk")
     t_o, obj = get(series, "control", "closest_object_distance")
 
@@ -158,7 +160,7 @@ def figures(series, events, out_png):
     a = ax[0][2]
     a.plot(t_l, lat * 100, lw=1.2, label="lateral_deviation")
     if len(latc):
-        a.plot(t_l, latc * 100, lw=1.0, alpha=.7, label="centerline 기준")
+        a.plot(t_lc, latc * 100, lw=1.0, alpha=.7, label="centerline 기준")
     a.axhline(0, color="k", lw=.6)
     a.set(title="횡편차", xlabel="t [s]", ylabel="편차 [cm]")
     a.legend(prop={"size": 8}); a.grid(alpha=.3)

@@ -1,11 +1,26 @@
 # RESTART — 인스턴스 재시작 절차
 
-> **⚠️ 2026-08-22 — 아래 절차는 지금 그대로 쓸 수 없다.**
-> 인스턴스가 `48174399` → `48401420`으로 **교체**됐다 (GPU도 RTX 5080 → RTX 3090).
-> 살아남은 것은 `/workspace` 볼륨뿐이고, 스택은 전부 사라졌다:
-> `/opt/ros`, `/root/autoware`, `/root/awsim`, `/root/cyclonedds.xml`, `/root/start_*.sh`,
-> 그리고 `migration_backup.tar.gz`까지. **재설치가 선행돼야 한다.**
-> 아래 내용은 재설치 후의 기동 절차 + 설정 근거로서 유효하다.
+> **2026-08-22 — 인스턴스 `48401420` 에 재설치 완료.** 아래 절차가 다시 유효하다.
+> 다만 기동 명령은 `/workspace/scripts/` 의 스크립트를 쓰는 것이 낫다 (`/root` 는 인스턴스가
+> 바뀌면 사라진다). 스크립트에는 이 컨테이너 고유의 함정 처리가 들어 있다 — 자세한 경위는
+> PROGRESS.md 「인스턴스 교체 → 전면 재설치」.
+>
+> ```bash
+> bash /workspace/scripts/start_awsim.sh      # 그다음 Load 클릭 (아래 자동 클릭 참고)
+> bash /workspace/scripts/start_autoware.sh   # 노드 186개까지 약 90초
+> bash /workspace/scripts/start_display21.sh  # :21 + VNC 5901 + noVNC 6081
+> bash /workspace/scripts/start_rviz21.sh
+> bash /workspace/scripts/start_collector.sh  # 지표 수집
+> ```
+>
+> **Load 버튼 자동 클릭** (이전에 "GUI 필수"로 남겼던 항목):
+> ```bash
+> DISPLAY=:20 xdotool mousemove 1394 937 click 1
+> ```
+>
+> **`cyclonedds.xml` 주의** — `AllowMulticast` 는 `spdp` 여야 하고(과금),
+> `SocketReceiveBufferSize` 의 `min` 은 `400000B` 여야 한다. 공식 문서 값 `10MB` 로 두면
+> 이 컨테이너에서는 **노드가 한 개도 뜨지 않는다** (`/proc/sys` 읽기 전용 → rmem_max 못 올림).
 
 vast.ai 인스턴스를 중지했다 다시 켰을 때 스택을 복구하는 순서.
 컨테이너 파일시스템이 유지된 경우 설정은 그대로 남아 있고, **프로세스만 다시 띄우면 된다.**
