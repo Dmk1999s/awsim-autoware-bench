@@ -19,6 +19,7 @@ setup(
     entry_points={
         "console_scripts": [
             "metrics_collector = autoware_bench.metrics_collector:main",
+            "scenario_runner = autoware_bench.scenario_runner:main",
         ],
     },
 )

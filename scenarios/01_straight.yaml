@@ -1,0 +1,4 @@
+name: 01_straight
+description: 직선 구간 기본 주행. 다른 시나리오의 기준선이 된다.
+goal: {x: 81470.3, y: 49980.1, z: 41.5, yaw: 0.60}
+timeout_s: 240
