@@ -5,8 +5,14 @@ log/
 
 # 수집 결과 (용량이 크고 실행마다 달라짐)
 runs/*.csv
-reports/
 collector.log
+
+# 리포트: 그림·CSV 는 빼고 요약(summary.md)만 추적한다.
+# WORKLOG 의 전후 비교가 이 파일들을 근거로 삼는다.
+reports/*
+!reports/*/
+reports/*/*
+!reports/*/summary.md
 
 # 파이썬
 __pycache__/
