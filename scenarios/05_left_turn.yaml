@@ -1,0 +1,18 @@
+name: 05_left_turn
+description: >
+  스폰 → 첫 신호 교차로에서 좌회전(lanelet 570, 좌측통행의 근측 회전) → (81403, 49967) 도착.
+  intersection / blind_spot 모듈의 판단이 factor 로 찍히는지 본다.
+  신호(1487·1489)는 초록으로 상시 강제 — 신호 대기와 회전 판단을 분리하기 위함.
+goal: {x: 81392.6, y: 50037.4, z: 41.5, yaw: 1.71}   # 좌회전 후 북행 도로(lanelet 246) 중간
+timeout_s: 300
+traffic_override:
+  group_ids: [1487, 1489]
+  color: GREEN
+criteria:
+  # 공통 기준은 직선 주행 10회에서 도출된 것이라 회전에는 맞지 않는다.
+  # 회전 데이터가 쌓이기 전까지는 완주와 저크만 본다 (횡편차는 회전 곡률이 지배).
+  max:
+    lat_p95: 60.0
+    lat_rms: 30.0
+    settle_t: 120.0
+    jerk_p95: 4.0
