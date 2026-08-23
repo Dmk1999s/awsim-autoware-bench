@@ -25,9 +25,10 @@
 
 - [x] `.gitignore` — `build/`, `install/`, `log/`, `runs/*.csv`, `reports/`, `collector.log` 제외
 - [x] 로컬 git 초기 커밋 (`697d265`)
-- [ ] **GitHub 저장소 생성 후 push — 우선순위 상**
+- [x] **GitHub push** — `github.com/Dmk1999s/awsim-autoware-bench` (master)
       `/workspace`는 `df`상 `/`와 같은 overlay다. 별도 볼륨이 아니라서 인스턴스가 교체되면
-      남는다는 보장이 없다. 2026-08-22에 `migration_backup.tar.gz`를 그렇게 잃었다
+      남는다는 보장이 없다. 2026-08-22에 `migration_backup.tar.gz`를 그렇게 잃었다 —
+      작업 단위마다 push 할 것
 
 ---
 
