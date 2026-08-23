@@ -49,6 +49,24 @@ def xyz_of(msg):
     return pts[np.isfinite(pts).all(axis=1)]
 
 
+def extent(shape):
+    """물체의 긴 변·짧은 변 [m].
+
+    군집 단계의 물체는 대부분 POLYGON 이라 `dimensions` 가 0 이다. 그걸 그대로 쓰면
+    「차 크기 군집」 필터가 전부 걸러진다 — 실측에서 10,957 개 중 하나도 안 남았다.
+    폴리곤이면 발자국 점들의 범위로 잰다.
+    """
+    if shape.dimensions.x > 0.01:
+        return f"{shape.dimensions.x:.2f} {shape.dimensions.y:.2f}"
+    pts = shape.footprint.points
+    if not pts:
+        return "0.00 0.00"
+    xs = [p.x for p in pts]
+    ys = [p.y for p in pts]
+    a, b = max(xs) - min(xs), max(ys) - min(ys)
+    return f"{max(a, b):.2f} {min(a, b):.2f}"
+
+
 def yaw_of(q):
     return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 
@@ -130,11 +148,13 @@ class Probe(Node):
             d = math.hypot(xy[0] - self.tx, xy[1] - self.ty)
             if best is None or d < best:
                 best = d
-            # 추적 단계만 전체 물체 위치를 남긴다 — 실제 NPC 의 연속성 비교에 쓴다
-            if stage == "track":
-                self.write(msg.header.stamp, "obj",
-                           f"{bytes(o.object_id.uuid[:4]).hex()}/xy",
-                           f"{xy[0]:.2f} {xy[1]:.2f}")
+            # 군집·검출·추적 단계의 물체를 위치와 크기까지 남긴다.
+            # 「군집이 잡은 차 크기 물체를 ML 이 얼마나 받아 주는가」를 재려면
+            # 단계별 물체 목록을 나란히 놓고 봐야 한다.
+            if stage in ("cluster", "centerpoint", "track"):
+                oid = bytes(o.object_id.uuid[:4]).hex() if hasattr(o, "object_id") else "-"
+                self.write(msg.header.stamp, f"o_{stage}", f"{oid}/box",
+                           f"{xy[0]:.2f} {xy[1]:.2f} {extent(o.shape)}")
         self.write(msg.header.stamp, stage, "n", len(msg.objects))
         self.write(msg.header.stamp, stage, "near", f"{best:.2f}" if best is not None else "")
 
