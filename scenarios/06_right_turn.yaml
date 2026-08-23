@@ -1,0 +1,18 @@
+name: 06_right_turn
+description: >
+  스폰 → 첫 신호 교차로에서 우회전(lanelet 490 — 좌측통행이므로 대향차 횡단) → 남동행 도로
+  (lanelet 266) 중간 도착. NPC 교통이 흐르는 상태에서 intersection 모듈의 대향차
+  gap acceptance 가 factor 로 찍히는지 본다.
+  신호는 1487·1488(우회전 차선 참조)·1489 초록 강제 — 단, arbiter 는 카메라가 빨강을 보면
+  빨강을 택하므로(WORKLOG 9) 자연 빨강 대기가 섞일 수 있다. 정지 자체는 실패가 아니다.
+goal: {x: 81442.76, y: 49849.05, z: 41.06, yaw: -1.136}   # lanelet 266 실제 중심선 50% 지점 (끝점 평균은 곡선 도로라 10 m 벗어남)
+timeout_s: 400
+traffic_override:
+  group_ids: [1487, 1488, 1489]
+  color: GREEN
+criteria:
+  max:
+    lat_p95: 60.0
+    lat_rms: 30.0
+    settle_t: 120.0
+    jerk_p95: 4.0
