@@ -166,6 +166,8 @@ class ScenarioRunner(Node):
             "route": self.create_client(SetRoutePoints, "/api/routing/set_route_points"),
             "auto": self.create_client(ChangeOperationMode,
                                        "/api/operation_mode/change_to_autonomous"),
+            "stop": self.create_client(ChangeOperationMode,
+                                       "/api/operation_mode/change_to_stop"),
         }
 
     def on_kinematic(self, msg):
@@ -346,6 +348,22 @@ class ScenarioRunner(Node):
             raise RuntimeError(
                 f"경로가 직선거리의 {ratio:.1f}배 (한도 {limit}) — 우회 경로다. 출발하지 않는다")
 
+    def stop_and_clear(self):
+        """도착으로 끝나지 않은 회차(장애물 앞 정지 등)를 정리한다.
+
+        자율주행 모드로 경로를 쥔 채 끝내면 다음 회차의 clear_route 가 거부되고
+        (`경로 설정 거부: The route is already set`), 그 뒤 회차가 전부 같은 이유로 죽는다
+        — 실측 5회 배치에서 2회차부터 연달아 실패했다.
+        """
+        try:
+            self.call("stop", ChangeOperationMode.Request())
+            self.spin(1.0)
+            status = self.call("clear", ClearRoute.Request())
+            if not status.success:
+                self.get_logger().warn(f"경로 해제 거부: {status.message}")
+        except RuntimeError as e:
+            self.get_logger().warn(f"주행 정리 실패: {e}")
+
     def engage(self):
         # 경로를 넣은 직후에는 자율주행이 아직 준비되지 않는다. 계획이 trajectory 를
         # 내놓아야 is_autonomous_mode_available 이 켜지고, 그 전에 부르면
@@ -487,6 +505,12 @@ class ScenarioRunner(Node):
         if tl and "hold_stop_s" not in tl:
             color = getattr(TrafficLightElement, tl.get("color", "GREEN"))
             self.get_logger().info(f"신호 상시 강제: 그룹 {tl['group_ids']} {tl.get('color','GREEN')}")
+            # 차선을 막은 장애물 앞에서는 도착이 아니라 **정지**가 성공이다.
+            # 이 구분이 없으면 관통이 "완주"로, 제대로 선 회차가 "시간 초과"로 기록된다
+            # — 실제로 09 가 그렇게 뒤집혀 있었다 (WORKLOG 31).
+            stop_hold = self.spec.get("stop_hold_s")
+            stop_started = None
+            has_moved = False
             last_pub = 0.0
             while time.time() - t0 < timeout:
                 rclpy.spin_once(self, timeout_sec=0.1)
@@ -494,7 +518,21 @@ class ScenarioRunner(Node):
                 if time.time() - last_pub > 0.4:
                     self.publish_signal(tl["group_ids"], color)
                     last_pub = time.time()
+                if stop_hold:
+                    now = time.time()
+                    if abs(self.est_vel) > 0.1:
+                        has_moved, stop_started = True, None
+                    elif not has_moved:
+                        pass                     # 출발 대기를 정지로 세지 않는다
+                    elif stop_started is None:
+                        stop_started = now
+                    elif now - stop_started >= stop_hold:
+                        self.get_logger().info(f"장애물 앞 정지 {stop_hold}s 확인")
+                        return True, now - t0
                 if self.route_state == RouteState.ARRIVED:
+                    if stop_hold:
+                        self.get_logger().error("장애물이 있는데 도착 — 관통했다")
+                        return False, time.time() - t0
                     return True, time.time() - t0
             self.get_logger().error(f"시간 초과 ({timeout}s)")
             return False, time.time() - t0
@@ -577,7 +615,8 @@ class ScenarioRunner(Node):
         self.spawn_objects(moving_objs)
         arrived, elapsed = self.drive()
         if arrived:
-            self.get_logger().info(f"완주 — {elapsed:.1f} s")
+            self.get_logger().info(f"주행 종료 — {elapsed:.1f} s")
+        self.stop_and_clear()
         return arrived
 
 
