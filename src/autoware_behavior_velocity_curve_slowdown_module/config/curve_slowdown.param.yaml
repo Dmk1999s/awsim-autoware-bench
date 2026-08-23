@@ -16,3 +16,6 @@
       curvature_threshold: 0.02
       # 경로를 훑는 간격
       sample_interval: 1.0
+      # 곡률을 재는 기준 거리(±m). 0 에 가까울수록 스플라인 보간 잡음을 그대로 먹는다 —
+      # 실측으로 보간 곡률이 기하 곡률의 1.5배였다 (WORKLOG 18).
+      curvature_span: 3.0

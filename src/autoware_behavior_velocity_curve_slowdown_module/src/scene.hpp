@@ -23,6 +23,7 @@ struct CurveSlowdownParam
   double preview_distance{20.0};
   double curvature_threshold{0.02};
   double sample_interval{1.0};
+  double curvature_span{3.0};
 };
 
 class CurveSlowdownModule : public experimental::SceneModuleInterface

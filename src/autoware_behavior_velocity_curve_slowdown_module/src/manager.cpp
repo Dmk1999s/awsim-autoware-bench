@@ -23,6 +23,8 @@ CurveSlowdownModuleManager::CurveSlowdownModuleManager(rclcpp::Node & node)
     experimental::get_or_declare_parameter<double>(node, ns + ".curvature_threshold");
   param_->sample_interval =
     experimental::get_or_declare_parameter<double>(node, ns + ".sample_interval");
+  param_->curvature_span =
+    experimental::get_or_declare_parameter<double>(node, ns + ".curvature_span");
 }
 
 void CurveSlowdownModuleManager::launchNewModules(
@@ -37,6 +39,7 @@ void CurveSlowdownModuleManager::launchNewModules(
   param_->min_velocity = node_.get_parameter(ns + ".min_velocity").as_double();
   param_->preview_distance = node_.get_parameter(ns + ".preview_distance").as_double();
   param_->curvature_threshold = node_.get_parameter(ns + ".curvature_threshold").as_double();
+  param_->curvature_span = node_.get_parameter(ns + ".curvature_span").as_double();
 
   // 지도상 특정 요소에 붙는 모듈이 아니라 경로 전체를 보는 모듈이라 인스턴스는 하나면 된다
   const lanelet::Id module_id = 0;

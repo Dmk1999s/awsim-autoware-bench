@@ -12,11 +12,11 @@ pkill -f "e2e_simulator.launch" 2>/dev/null || true
 sleep 8
 # 노드 실행파일은 install/<패키지>/lib/ 아래에 있다. 경로를 이만큼 좁히지 않으면
 # RViz 까지 잡힌다 — RViz 는 -d 인자로 install/<패키지>/share/ 경로를 들고 있다 (실측).
-for pat in "/root/autoware/install/[a-z_]*/lib/" "component_container" "rclcpp_components" "topic_tools/relay" "robot_state_publisher"; do
+for pat in "/root/autoware/install/[a-z0-9_]*/lib/" "component_container" "rclcpp_components" "topic_tools/relay" "robot_state_publisher"; do
   pkill -f "$pat" 2>/dev/null || true
 done
 sleep 3
-for pat in "/root/autoware/install/[a-z_]*/lib/" "component_container" "topic_tools/relay" "robot_state_publisher"; do
+for pat in "/root/autoware/install/[a-z0-9_]*/lib/" "component_container" "topic_tools/relay" "robot_state_publisher"; do
   pkill -9 -f "$pat" 2>/dev/null || true
 done
 sleep 2

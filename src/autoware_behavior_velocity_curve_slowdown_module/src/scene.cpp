@@ -16,6 +16,36 @@
 
 namespace autoware::behavior_velocity_planner
 {
+namespace
+{
+/// 경로 위 s 지점의 곡률을 ±span 떨어진 세 점의 외접원으로 잰다.
+///
+/// Trajectory::curvature() 를 그대로 쓰면 안 된다 — 그 값은 2 m 간격 경로점을 스플라인으로
+/// 보간한 곡선의 해석적 곡률이라 기하 곡률보다 크게 나온다. 실측: 같은 좌회전에서
+/// 보간 곡률 0.106 (R=9.4 m) vs 경로점 3점 기하 0.071 (R=14.0 m), 지도 중심선 0.069.
+/// 곡률이 1.5배로 부풀면 상한 v=√(a/κ) 가 낮아져 모듈이 필요 이상으로 감속한다 (WORKLOG 18).
+double span_curvature(const experimental::Trajectory & path, const double s, const double span)
+{
+  const double len = path.length();
+  const double a_s = std::max(0.0, s - span);
+  const double c_s = std::min(len, s + span);
+  if (c_s - a_s < 1e-3) {
+    return 0.0;
+  }
+  const auto a = path.compute(a_s).point.pose.position;
+  const auto b = path.compute(s).point.pose.position;
+  const auto c = path.compute(c_s).point.pose.position;
+  const double ab = std::hypot(b.x - a.x, b.y - a.y);
+  const double bc = std::hypot(c.x - b.x, c.y - b.y);
+  const double ca = std::hypot(a.x - c.x, a.y - c.y);
+  const double denom = ab * bc * ca;
+  if (denom < 1e-6) {
+    return 0.0;
+  }
+  const double area2 = std::abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y));
+  return 2.0 * area2 / denom;   // 4 * (면적) / (세 변의 곱)
+}
+}  // namespace
 
 CurveSlowdownModule::CurveSlowdownModule(
   const lanelet::Id module_id, const std::shared_ptr<CurveSlowdownParam> param,
@@ -53,7 +83,7 @@ bool CurveSlowdownModule::modifyPathVelocity(
   // (그쪽 decel_distance_before_curve 는 3.5 m).
   bool modified = false;
   for (double s = 0.0; s <= length; s += p.sample_interval) {
-    const double curvature = std::abs(path.curvature(s));
+    const double curvature = span_curvature(path, s, p.curvature_span);
     if (curvature < p.curvature_threshold) {
       continue;
     }
