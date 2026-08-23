@@ -53,22 +53,24 @@ def blamed_modules(series, t0, t1):
 
     수집기가 `<모듈>/status` 와 `<모듈>/distance` 로 나눠 기록하므로 이름은 키에서 뽑는다.
     """
-    out = []
+    # 1순위: 그 구간에 STOPPED(2) 를 낸 모듈.
+    # 2순위: STOPPED 는 없지만 근거리(15 m 이내)에서 APPROACHING(1) 이던 모듈 — "(접근중)" 으로
+    #        구분해 적는다. 실측에서 route-obstacle 이 차가 서 있는 동안에도 status 를
+    #        1 로만 유지하는 경우가 있었다 (장애물 실험, 앞면 4.5 m 정지).
+    stopped, approaching = [], []
     for (src, name), (t, v) in series.items():
         if src != "factor" or not name.endswith("/status"):
             continue
         mod = name[: -len("/status")]
-        sel = (t >= t0 - 0.5) & (t <= t1 + 0.5) & (v == 2)
-        if not sel.any():
-            continue
+        win = (t >= t0 - 0.5) & (t <= t1 + 0.5)
         td, d = series.get(("factor", f"{mod}/distance"), (np.array([]), np.array([])))
-        near = ""
-        if len(d):
-            dsel = (td >= t0 - 0.5) & (td <= t1 + 0.5)
-            if dsel.any():
-                near = f" ({d[dsel].min():.1f} m)"
-        out.append(f"`{mod}`{near}")
-    return ", ".join(out)
+        dwin = (td >= t0 - 0.5) & (td <= t1 + 0.5) if len(d) else np.array([], bool)
+        near = f" ({d[dwin].min():.1f} m)" if dwin.any() else ""
+        if (win & (v == 2)).any():
+            stopped.append(f"`{mod}`{near}")
+        elif (win & (v == 1)).any() and dwin.any() and d[dwin].min() < 15.0:
+            approaching.append(f"`{mod}` (접근중{near.strip() and near or ''})")
+    return ", ".join(stopped + approaching)
 
 
 def stop_events(t, vel):

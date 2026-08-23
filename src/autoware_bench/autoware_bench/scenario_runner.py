@@ -19,6 +19,7 @@ metrics_collector 가 경로 SET→ARRIVED 를 보고 알아서 CSV 를 남기�
 import math
 import subprocess
 import time
+import uuid as uuid_lib
 
 import rclpy
 import yaml
@@ -27,6 +28,7 @@ from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 
 from geometry_msgs.msg import Pose
 from nav_msgs.msg import Odometry
+from tier4_simulation_msgs.msg import DummyObject
 from autoware_adapi_v1_msgs.msg import OperationModeState, RouteState
 from autoware_adapi_v1_msgs.srv import (
     ClearRoute, ChangeOperationMode, InitializeLocalization, SetRoutePoints,
@@ -55,6 +57,7 @@ class ScenarioRunner(Node):
 
         self.route_state = None
         self.auto_available = False
+        self.est_vel = 0.0
         self.auto_seq = 0   # 새 메시지인지 가리기 위한 카운터
         self.est = None    # NDT 추정 위치
         self.truth = None  # AWSIM 정답 위치
@@ -69,7 +72,7 @@ class ScenarioRunner(Node):
         self.create_subscription(
             OperationModeState, "/api/operation_mode/state", self.on_operation_mode, latched)
         self.create_subscription(Odometry, "/localization/kinematic_state",
-                                 lambda m: setattr(self, "est", m.pose.pose.position), 10)
+                                 self.on_kinematic, 10)
         # AWSIM 의 정답 위치는 BEST_EFFORT 로 발행된다. 기본값(RELIABLE)으로 구독하면
         # QoS 불일치로 메시지가 한 개도 오지 않는다 — 경고만 뜨고 조용히 비어 있다.
         sensor = QoSProfile(
@@ -80,6 +83,12 @@ class ScenarioRunner(Node):
         self.create_subscription(Odometry, "/awsim/ground_truth/localization/kinematic_state",
                                  lambda m: setattr(self, "truth", m.pose.pose.position), sensor)
 
+        # 더미 객체. 이 토픽의 구독자는 dummy_perception_publisher 가 아니라 AWSIM 자신이다
+        # (GID 로 확인). 즉 여기로 ADD 를 보내면 AWSIM 씬에 실제 NPC 차량이 스폰되고,
+        # LiDAR → 인지 → 계획 전체 파이프라인이 그것을 감지한다 — 인지를 우회하지 않는다.
+        self.obj_pub = self.create_publisher(
+            DummyObject, "/simulation/dummy_perception_publisher/object_info", 10)
+
         self.cli = {
             "init": self.create_client(InitializeLocalization, "/api/localization/initialize"),
             "clear": self.create_client(ClearRoute, "/api/routing/clear_route"),
@@ -87,6 +96,10 @@ class ScenarioRunner(Node):
             "auto": self.create_client(ChangeOperationMode,
                                        "/api/operation_mode/change_to_autonomous"),
         }
+
+    def on_kinematic(self, msg):
+        self.est = msg.pose.pose.position
+        self.est_vel = msg.twist.twist.linear.x
 
     def on_operation_mode(self, msg):
         self.auto_available = msg.is_autonomous_mode_available
@@ -201,18 +214,83 @@ class ScenarioRunner(Node):
             self.spin(3.0)
         raise RuntimeError(f"자율주행 전환 실패 — {ENGAGE_ATTEMPTS}회 시도")
 
+    def clear_objects(self):
+        """앞 주행이 남긴 더미 객체 제거. 이걸 빼먹으면 회차 간 조건이 달라진다."""
+        msg = DummyObject()
+        msg.header.frame_id = "map"
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.action = DummyObject.DELETEALL if hasattr(DummyObject, "DELETEALL") else 3
+        self.obj_pub.publish(msg)
+        self.spin(1.0)
+
+    def spawn_objects(self):
+        """시나리오의 objects: 목록을 씬에 스폰한다."""
+        for o in self.spec.get("objects", []):
+            msg = DummyObject()
+            msg.header.frame_id = "map"
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.id.uuid = list(uuid_lib.uuid4().bytes)
+            msg.action = DummyObject.ADD
+            p = msg.initial_state.pose_covariance.pose
+            p.position.x, p.position.y = float(o["x"]), float(o["y"])
+            p.position.z = float(o.get("z", 41.5))
+            yaw = float(o.get("yaw", 0.0))
+            p.orientation.z = math.sin(yaw / 2.0)
+            p.orientation.w = math.cos(yaw / 2.0)
+            msg.classification.label = int(o.get("label", 1))   # 1 = CAR
+            msg.classification.probability = 1.0
+            msg.shape.type = 0                                   # BOUNDING_BOX
+            d = o.get("dimensions", {})
+            msg.shape.dimensions.x = float(d.get("x", 4.5))
+            msg.shape.dimensions.y = float(d.get("y", 1.8))
+            msg.shape.dimensions.z = float(d.get("z", 1.6))
+            msg.initial_state.twist_covariance.twist.linear.x = float(o.get("velocity", 0.0))
+            msg.max_velocity = float(o.get("velocity", 0.0))
+            msg.min_velocity = 0.0
+            self.obj_pub.publish(msg)
+            self.get_logger().info(
+                f"객체 스폰: label={msg.classification.label} ({o['x']:.1f}, {o['y']:.1f}) "
+                f"v={o.get('velocity', 0.0)}")
+        if self.spec.get("objects"):
+            self.spin(2.0)
+
     def drive(self):
         timeout = self.spec.get("timeout_s", 300)
         t0 = time.time()
+
+        # 장애물 시나리오: 차선을 막은 객체 앞에서는 영원히 도착하지 못한다.
+        # "hold_stop_s 초 연속 정지"를 확인하면 장애물을 치우고 재출발까지 본다 —
+        # 정지(계획이 세우는가)와 재출발(치우면 다시 가는가)을 한 주행에서 모두 검증한다.
+        hold = self.spec.get("hold_stop_s")
+        if hold and self.spec.get("objects"):
+            self.spin(3.0)   # 출발 직후의 정지(스폰 대기 잔여)를 정지로 오인하지 않도록
+            stop_started = None
+            while time.time() - t0 < timeout:
+                rclpy.spin_once(self, timeout_sec=0.1)
+                moving = abs(self.est_vel) > 0.1
+                if moving:
+                    stop_started = None
+                elif stop_started is None:
+                    stop_started = time.time()
+                elif time.time() - stop_started >= hold:
+                    self.get_logger().info(f"장애물 앞 정지 {hold}s 확인 — 객체 제거, 재출발 관찰")
+                    self.clear_objects()
+                    break
+            else:
+                self.get_logger().error(f"정지가 확인되지 않음 ({timeout}s)")
+                return False, time.time() - t0
+
         ok = self.wait_until(lambda: self.route_state == RouteState.ARRIVED,
-                             timeout=timeout, label="목적지 도착")
+                             timeout=timeout - (time.time() - t0), label="목적지 도착")
         return ok, time.time() - t0
 
     def run(self):
         self.wait_until(lambda: self.truth is not None, 30.0, "AWSIM 연결")
         self.reset_ego()
+        self.clear_objects()
         self.reinit_localization()
         self.set_route()
+        self.spawn_objects()   # engage 전에 놓는다 — 출발 시점부터 인지가 보고 있어야 한다
         self.engage()
         arrived, elapsed = self.drive()
         if arrived:

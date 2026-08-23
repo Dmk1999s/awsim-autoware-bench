@@ -1,0 +1,13 @@
+name: 02_obstacle
+description: >
+  01_straight 와 같은 경로에, 출발점에서 50 m 앞 자차 차선 위에 정지 차량을 놓는다.
+  좌표는 기존 주행 궤적의 50 m 지점에서 뽑았다 (차선 중앙 보장).
+  기대: 인지가 차량을 잡고 계획이 그 앞에 세운다. 정지 사유에 obstacle 계열 모듈이 찍혀야 한다.
+goal: {x: 81470.3, y: 49980.1, z: 41.5, yaw: 0.60}
+timeout_s: 300
+hold_stop_s: 8      # 8초 연속 정지를 확인하면 장애물을 치우고 재출발을 본다
+objects:
+  - {x: 81422.11, y: 49946.84, z: 41.3, yaw: 0.600, label: 1, velocity: 0.0}
+criteria:
+  min:
+    mid_stops: 1        # 장애물 앞에서 반드시 서야 한다

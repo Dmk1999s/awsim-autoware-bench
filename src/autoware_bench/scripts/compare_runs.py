@@ -156,9 +156,17 @@ def blame_counts(series, mid_events):
         for (src, name), (t, v) in series.items():
             if src != "factor" or not name.endswith("/status"):
                 continue
-            sel = (t >= s0 - 0.5) & (t <= s1 + 0.5) & (v == 2)
-            if sel.any():
-                counts[name[: -len("/status")]] += 1
+            mod = name[: -len("/status")]
+            win = (t >= s0 - 0.5) & (t <= s1 + 0.5)
+            if (win & (v == 2)).any():
+                counts[mod] += 1
+                continue
+            # STOPPED 를 안 내고 근거리 APPROACHING 만 유지하는 모듈이 있다 (route-obstacle 실측)
+            td, d = series.get(("factor", f"{mod}/distance"), (None, None))
+            if td is not None:
+                dwin = (td >= s0 - 0.5) & (td <= s1 + 0.5)
+                if (win & (v == 1)).any() and dwin.any() and d[dwin].min() < 15.0:
+                    counts[f"{mod} (접근중)"] += 1
     return dict(counts)
 
 
