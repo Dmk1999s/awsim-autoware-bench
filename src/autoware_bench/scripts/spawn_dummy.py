@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """더미 객체 하나를 씬에 심고 유지한다 (러너 없이 인지만 볼 때 쓴다).
 
-AWSIM 더미는 약 30 초면 스스로 사라지므로(WORKLOG 26) 기본으로 25 초마다 다시 심는다.
-러너와 같은 방식이다 — 먼저 새로 심고, 그다음 옛것을 지운다.
+AWSIM 더미는 약 30 초면 스스로 사라지므로(WORKLOG 26) 기본으로 20 초마다 같은 자리에
+겹쳐 심는다. **옛것은 지우지 않는다** — DELETE 는 uuid 가 아니라 자리를 지워서 방금 심은
+것까지 데려간다 (WORKLOG 30). 수명으로 죽는 것은 자기 것만 데려간다.
 """
 
 import argparse
@@ -70,7 +71,7 @@ def main():
     ap.add_argument("--label", type=int, default=1)
     ap.add_argument("--velocity", type=float, default=0.0)
     ap.add_argument("--seconds", type=float, default=120.0)
-    ap.add_argument("--refresh", type=float, default=25.0, help="0 이면 다시 심지 않는다")
+    ap.add_argument("--refresh", type=float, default=20.0, help="0 이면 다시 심지 않는다")
     ap.add_argument("--keep", action="store_true", help="끝날 때 지우지 않는다 (수명으로 사라지게 둔다)")
     a = ap.parse_args()
 
@@ -97,12 +98,7 @@ def main():
         while rclpy.ok() and time.time() < end:
             rclpy.spin_once(node, timeout_sec=0.1)
             if a.refresh and time.time() - last >= a.refresh:
-                old = list(node.live)
-                node.add(x, y, yaw)
-                time.sleep(0.5)
-                for uid in old:
-                    node.delete(uid)
-                node.live = [u for u in node.live if u not in old]
+                node.add(x, y, yaw)      # 겹쳐 심고 옛것은 수명에 맡긴다 (WORKLOG 30)
                 last = time.time()
     except KeyboardInterrupt:
         pass

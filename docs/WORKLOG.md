@@ -1319,3 +1319,62 @@ WORKLOG 27 의 급제동(−6.14 m/s²)은 1회짜리라 편차를 내려 5회�
 **누적 30회 중 4회(13%)**. 모듈과는 무관하다 — 개입 자체가 없었으므로 인과가 없고,
 0/10 vs 2/10 은 이 표본 크기에서 구분되지 않는다. 이 항목은 §23 의 신뢰도 병합 문제이며,
 표본만 늘려 적는다.
+
+
+### 33. 계획이 보는 물체 목록은 사실상 CenterPoint 하나다 — 군집 분기는 추적기에 연결돼 있지 않다
+
+**문제.** §31 이 남긴 질문. 같은 장애물인데 접근 중 인지율이 회차마다 3~79% 로 흔들렸다.
+가림(다른 차)으로는 설명되지 않았다.
+
+**측정 — 자차를 세운 채 3 분.** 25 m 앞에 정지 차량을 심고 20 초마다 겹쳐 심어
+(§30 방식) 계속 있게 한 뒤, 인지 단계별로 지켜봤다. **물체가 실제로 있던 161 초** 기준:
+
+| 단계 | 놓친 초 |
+|---|---:|
+| cluster (LiDAR 군집) | **0 (0%)** |
+| centerpoint (ML 검출) | 65 (40%) |
+| track (추적) | **83 (52%)** |
+| predict (계획이 보는 것) | **83 (52%)** |
+
+**LiDAR 는 161 초 내내 이 물체를 물체로 묶는다. 그런데 계획은 절반을 못 본다.**
+끊김은 12 회, 길이 1~**25 초**. 자차는 서 있었고 물체도 서 있었다.
+
+**원인.** 추적기의 입력 채널을 봤다.
+
+```
+$ ros2 param get .../multi_object_tracker input/detection01/channel   → lidar_centerpoint
+$ ros2 param get .../multi_object_tracker input/detection02..12       → none
+$ ros2 node info .../multi_object_tracker | grep objects
+    /perception/object_recognition/detection/camera_only/objects
+    /perception/object_recognition/detection/centerpoint/objects
+```
+
+**군집 분기(`detection/clustering/objects`)는 추적기에 연결돼 있지 않다.**
+설정에 `lidar_clustering` 채널 정의는 있지만(`input_channels.param.yaml`), 실제로 붙은 것은
+`lidar_centerpoint` 하나다. 그래서 군집이 100% 잡아도 계획에는 전달되지 않는다.
+
+동시성으로도 같은 그림이 나온다 (161 초):
+
+| | 추적 있음 | 추적 없음 |
+|---|---:|---:|
+| ML 검출 있음 | 73 | 23 |
+| ML 검출 없음 | 6 | **59** |
+
+**ML 이 놓친 65 초 중 59 초를 추적도 놓쳤다.** 추적은 ML 을 따라간다.
+
+**그래서 §31 이 설명된다.** 「접근 중 인지율」은 사실 **AWSIM 더미에 대한 CenterPoint 의
+재현율**이었다. 그것이 회차마다 흔들리니 정지 여유도 흔들렸고, 13 회 중 4 회가
+장애물 표면 0.75 m 안에서 섰다. **장애물 실험의 상한은 계획이 아니라 검출기가 정하고 있었다.**
+
+**하지 않은 것.** `lidar_clustering` 을 추적기 입력에 붙이면 어떻게 되는지가 다음 실험이다.
+그 배선은 파라미터 파일이 아니라 시스템 구조 JSON 에 있고
+(`autoware_sample_designs/.../E2ESimulation_2_connections.json`, `~/input/detection01/objects` 로
+리맵) 스택 재기동이 필요하다. 되돌리기 비용이 커서 무인으로는 건드리지 않았다.
+
+**유보.** 이 수치는 **AWSIM 더미 객체**에 대한 것이다. 시뮬레이터가 만드는 점군이라
+실물 학습 분포와 다를 수 있고, 실제 NPC 차량에 대한 CenterPoint 재현율은 별개로 재야 한다.
+「Autoware 가 차를 못 본다」가 아니라 「이 조합에서 이 물체를 절반만 본다」가 지금까지의 사실이다.
+
+**곁가지.** 이 실험에서 **첫 ADD 가 먹지 않았다** — 스폰 후 20 초 동안 점군에 아무것도
+없다가 두 번째 ADD(t=24 s)에서야 나타났다. WORKLOG 24 의 「조용한 스폰 실패」와 같은 계열이며,
+러너가 스폰을 검증하는 이유이기도 하다.
