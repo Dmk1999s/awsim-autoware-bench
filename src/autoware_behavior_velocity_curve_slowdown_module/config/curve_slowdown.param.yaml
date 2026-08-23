@@ -1,0 +1,18 @@
+/**:
+  ros__parameters:
+    curve_slowdown:
+      # A/B 를 위해 런타임에 끌 수 있다. 스택을 재기동하면 그 자체가 조건 차이를 만든다.
+      enable: true
+      # 목표 횡가속도. v_limit = sqrt(a_lat / κ)
+      # 기존 velocity_smoother 의 lateral_acceleration_limits 는 1.0 인데, 실측 최댓값은
+      # 1.42~1.52 m/s² 였다 (WORKLOG 13). 그보다 낮게 잡아야 효과가 보인다.
+      max_lateral_accel: 0.8
+      # 감속 하한. 이보다 느리게는 만들지 않는다 (교차로에서 기어가지 않도록)
+      min_velocity: 1.5
+      # 곡선 진입 몇 m 전부터 목표 속도를 적용할지.
+      # smoother 의 decel_distance_before_curve 는 3.5 m — 이 모듈의 존재 이유가 이 값이다.
+      preview_distance: 20.0
+      # 이 곡률 이하는 직선으로 본다 (0.02 = 반경 50 m)
+      curvature_threshold: 0.02
+      # 경로를 훑는 간격
+      sample_interval: 1.0

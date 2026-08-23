@@ -20,6 +20,7 @@ from nav_msgs.msg import Odometry
 from autoware_perception_msgs.msg import PredictedObjects
 from tier4_metric_msgs.msg import MetricArray
 from autoware_adapi_v1_msgs.msg import OperationModeState, RouteState, VelocityFactorArray
+from autoware_internal_planning_msgs.msg import PlanningFactorArray
 
 
 def yaw_from_quaternion(q):
@@ -65,6 +66,13 @@ class MetricsCollector(Node):
         self.create_subscription(
             VelocityFactorArray, "/api/planning/velocity_factors",
             self.on_velocity_factors, 10)
+
+        # 자체 모듈은 위 집계에 안 잡힌다 — ADAPI 의 구독 목록이 소스에 하드코딩돼 있고
+        # (autoware_default_adapi_universe/src/planning.cpp) 거기에 없는 토픽은 그냥 빠진다.
+        # 그래서 모듈 토픽을 직접 받는다. Autoware 를 고치는 대신 하네스 쪽에서 흡수한다.
+        self.create_subscription(
+            PlanningFactorArray, "/planning/planning_factors/curve_slowdown",
+            self.on_planning_factors, 10)
 
         # ADAPI 상태는 TRANSIENT_LOCAL 이라 구독자도 맞춰야 시작 시 현재 값을 받는다
         latched = QoSProfile(
@@ -140,6 +148,16 @@ class MetricsCollector(Node):
             name = f.behavior or "unknown"
             self.write(msg.header.stamp, "factor", f"{name}/status", f.status)
             self.write(msg.header.stamp, "factor", f"{name}/distance", f"{f.distance:.3f}")
+
+    def on_planning_factors(self, msg):
+        """자체 모듈의 factor. 제한 속도(velocity)까지 남긴다 — 모듈이 실제로 얼마를
+        걸었는지가 before/after 비교의 근거가 된다."""
+        for f in msg.factors:
+            name = f.module or "unknown"
+            for cp in f.control_points:
+                self.write(msg.header.stamp, "factor", f"{name}/behavior", f.behavior)
+                self.write(msg.header.stamp, "factor", f"{name}/distance", f"{cp.distance:.3f}")
+                self.write(msg.header.stamp, "factor", f"{name}/velocity", f"{cp.velocity:.3f}")
 
     def on_operation_mode(self, msg):
         # 1=STOP 2=AUTONOMOUS 3=LOCAL 4=REMOTE

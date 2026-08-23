@@ -35,6 +35,7 @@ METRICS = [
     # 횡오차 가중치를 올리면 조향을 더 세게 쓴다. 그 대가가 여기서 드러난다.
     ("|조향속도| p95",     lambda r: r["steer_rate_p95"], "rad/s", True),
     ("|횡가속| p95",       lambda r: r["lat_acc_p95"],   "m/s²",  True),
+    ("|횡가속| 최대",      lambda r: r["lat_acc_max"],   "m/s²",  True),
     ("최근접 객체 최소",   lambda r: r["min_obj"],       "m",     False),
     ("목표 오차(종)",      lambda r: r["goal_lon"],      "m",     True),
     ("주행 중 정지",       lambda r: r["mid_stops"],     "회",    True),
@@ -93,6 +94,26 @@ def settle_point(t, lat):
     return (float(t[below[0]]), offset) if len(below) else (float(t[-1]), offset)
 
 
+def lateral_acceleration(series, t0):
+    """횡가속도를 자차 궤적에서 직접 계산한다: a_lat = v · dψ/dt.
+
+    control_evaluator 가 `lateral_acceleration_abs` 를 발행하기는 하는데 값이 항상
+    정확히 0 이다 (전 회차 확인). 있는 척하는 빈 지표라 그대로 쓰면 곡률 관련 비교가
+    전부 0 대 0 이 된다. 그래서 ego 의 yaw·속도로 직접 만든다.
+    """
+    t, yaw = series.get(("ego", "yaw"), (np.array([]), np.array([])))
+    tv, vel = series.get(("ego", "vel"), (np.array([]), np.array([])))
+    if len(t) < 3 or len(tv) < 3:
+        return np.array([])
+    v = np.interp(t, tv, vel)
+    dt = np.diff(t)
+    dyaw = (np.diff(yaw) + np.pi) % (2 * np.pi) - np.pi
+    ok = (dt > 1e-3) & (dt < 0.5) & (t[1:] >= t0) & (np.abs(v[1:]) > 0.5)
+    if not ok.any():
+        return np.array([])
+    return np.abs(v[1:][ok] * dyaw[ok] / dt[ok])
+
+
 def summarize(path):
     """주행 1회를 숫자 한 줄로 줄인다."""
     s = load(path)
@@ -108,7 +129,7 @@ def summarize(path):
     _, jerk = clip(*get(s, "control", "jerk"), max(t_auto, t_settle))
     _, obj = clip(*get(s, "control", "closest_object_distance"), t_auto)
     _, steer_rate = clip(*get(s, "control", "steering_rate"), max(t_auto, t_settle))
-    _, lat_acc = clip(*get(s, "control", "lateral_acceleration_abs"), max(t_auto, t_settle))
+    lat_acc = lateral_acceleration(s, max(t_auto, t_settle))
     _, goal = get(s, "control", "goal_longitudinal_deviation_abs")
 
     duration = float(t_v[-1]) if len(t_v) else float("nan")
@@ -140,7 +161,8 @@ def summarize(path):
         "lat_rms": float(np.sqrt((lat ** 2).mean()) * 100) if len(lat) else float("nan"),
         "jerk_p95": float(np.percentile(np.abs(jerk), 95)) if len(jerk) else float("nan"),
         "steer_rate_p95": float(np.percentile(np.abs(steer_rate), 95)) if len(steer_rate) else float("nan"),
-        "lat_acc_p95": float(np.percentile(np.abs(lat_acc), 95)) if len(lat_acc) else float("nan"),
+        "lat_acc_p95": float(np.percentile(lat_acc, 95)) if len(lat_acc) else float("nan"),
+        "lat_acc_max": float(lat_acc.max()) if len(lat_acc) else float("nan"),
         "min_obj": float(obj.min()) if len(obj) else float("nan"),
         "goal_lon": float(goal[-1]) if len(goal) else float("nan"),
         "mid_stops": float(len(mid)),

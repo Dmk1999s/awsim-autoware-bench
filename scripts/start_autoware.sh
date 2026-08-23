@@ -13,6 +13,9 @@ unset VIRTUAL_ENV
 export PATH="/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 source /opt/ros/humble/setup.bash
 source /root/autoware/install/setup.bash
+# 자체 behavior_velocity 모듈(curve_slowdown)을 pluginlib 이 찾으려면 이 워크스페이스가 필요하다.
+# 등록(런치 XML 패치)은 scripts/register_curve_module.sh 가 한다.
+source /workspace/install/setup.bash
 export DISPLAY=:21
 export CYCLONEDDS_URI=file:///root/cyclonedds.xml
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
