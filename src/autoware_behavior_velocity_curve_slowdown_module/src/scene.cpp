@@ -35,6 +35,7 @@ bool CurveSlowdownModule::modifyPathVelocity(
   [[maybe_unused]] const PlannerData & planner_data)
 {
   slowdown_pose_.reset();
+  slowdown_velocity_ = 0.0;
 
   const auto & p = *param_;
   if (!p.enable) {
@@ -64,11 +65,15 @@ bool CurveSlowdownModule::modifyPathVelocity(
     path.longitudinal_velocity_mps().range(from, to).clamp(static_cast<float>(v_limit));
 
     if (!modified) {
-      // 이번 주기에 처음 제한이 걸린 지점을 감속 시작점으로 남긴다
+      // 감속을 시작하는 지점 (처음 제한이 걸린 곳)
       slowdown_pose_ = path.compute(from).point.pose;
-      slowdown_velocity_ = v_limit;
       modified = true;
     }
+    // 보고할 속도는 "가장 낮은 상한"이다. 처음 걸린 점의 값을 쓰면 실제로 차를 묶는 값과
+    // 다르다 — 그 차이 때문에 스윕 분석에서 상한 대비 실제 속도가 65%로 잘못 보였다.
+    slowdown_velocity_ = modified && slowdown_velocity_ > 0.0
+                           ? std::min(slowdown_velocity_, v_limit)
+                           : v_limit;
   }
 
   if (modified && slowdown_pose_) {
