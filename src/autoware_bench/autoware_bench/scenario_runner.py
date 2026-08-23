@@ -31,7 +31,7 @@ from geometry_msgs.msg import Pose
 from nav_msgs.msg import Odometry
 from tier4_simulation_msgs.msg import DummyObject
 from autoware_perception_msgs.msg import (
-    TrafficLightGroupArray, TrafficLightGroup, TrafficLightElement,
+    TrafficLightGroupArray, TrafficLightGroup, TrafficLightElement, PredictedObjects,
 )
 from autoware_planning_msgs.msg import LaneletRoute
 from autoware_adapi_v1_msgs.msg import OperationModeState, RouteState
@@ -125,6 +125,13 @@ class ScenarioRunner(Node):
         )
         self.create_subscription(Odometry, "/awsim/ground_truth/localization/kinematic_state",
                                  lambda m: setattr(self, "truth", m.pose.pose.position), sensor)
+        # 스폰한 객체가 실제로 씬에 생겼는지 확인하려고 인지 결과를 본다 (아래 verify_spawn)
+        self.objects = []
+        self.create_subscription(
+            PredictedObjects, "/perception/object_recognition/objects",
+            lambda m: setattr(self, "objects", [
+                (o.kinematics.initial_pose_with_covariance.pose.position.x,
+                 o.kinematics.initial_pose_with_covariance.pose.position.y) for o in m.objects]), 10)
 
         # 더미 객체. 이 토픽의 구독자는 dummy_perception_publisher 가 아니라 AWSIM 자신이다
         # (GID 로 확인). 즉 여기로 ADD 를 보내면 AWSIM 씬에 실제 NPC 차량이 스폰되고,
@@ -349,6 +356,29 @@ class ScenarioRunner(Node):
         if objs:
             self.spin(2.0)
 
+    def verify_spawn(self, objs, timeout=15.0):
+        """스폰한 정지 객체가 인지에 잡히는지 확인한다.
+
+        AWSIM 의 더미 객체 기능이 **조용히 죽는다**. ADD 를 발행해도 씬에 아무것도 안 생기고
+        경고도 없다. 그 상태로 장애물 시나리오를 돌리면 차는 빈 도로를 달려 "완주"하고,
+        배치는 그것을 성공으로 센다 — 실측으로 5회 연속 그렇게 집계됐다 (WORKLOG 24).
+        AWSIM 재기동 외에는 복구되지 않으므로, 여기서 잡아 배치를 세운다.
+        """
+        targets = [(float(o["x"]), float(o["y"])) for o in objs]
+        if not targets:
+            return
+        end = time.time() + timeout
+        while time.time() < end:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            seen = [t for t in targets
+                    if any(math.hypot(ox - t[0], oy - t[1]) < 4.0 for ox, oy in self.objects)]
+            if len(seen) == len(targets):
+                self.get_logger().info(f"스폰 확인 — 객체 {len(seen)}개 인지됨")
+                return
+        raise RuntimeError(
+            f"스폰한 객체가 인지되지 않는다 ({len(targets)}개 중 "
+            f"{len(seen)}개) — AWSIM 더미 기능이 죽었을 수 있다. AWSIM 재기동 필요")
+
     def publish_signal(self, group_ids, color):
         msg = TrafficLightGroupArray()
         msg.stamp = self.get_clock().now().to_msg()
@@ -458,6 +488,7 @@ class ScenarioRunner(Node):
         static_objs = [o for o in self.spec.get("objects", []) if not o.get("velocity")]
         moving_objs = [o for o in self.spec.get("objects", []) if o.get("velocity")]
         self.spawn_objects(static_objs)
+        self.verify_spawn(static_objs)
         self.engage()
         self.spawn_objects(moving_objs)
         arrived, elapsed = self.drive()

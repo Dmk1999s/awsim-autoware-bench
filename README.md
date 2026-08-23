@@ -229,7 +229,7 @@ HMI 를 따로 만들었다 — `ros2 run autoware_bench dashboard`.
 
 ```bash
 # 기동 (각 스크립트에 이 환경 고유의 함정 처리가 주석과 함께 들어 있다)
-bash scripts/start_awsim.sh        # 이후 Load 자동 클릭: DISPLAY=:20 xdotool mousemove 1394 937 click 1
+bash scripts/start_awsim.sh        # 이후 Load 자동 클릭: DISPLAY=:20 xdotool mousemove 1798 1013 click 1
 bash scripts/start_autoware.sh
 bash scripts/start_collector.sh
 

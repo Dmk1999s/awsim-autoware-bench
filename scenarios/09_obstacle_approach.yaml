@@ -1,0 +1,23 @@
+name: 09_obstacle_approach
+description: 장애물 정지의 감속 품질만 따로 잰다. 02 는 앞선 신호에 걸리면 이미 서 있는 상태에서 장애물을 만나 급제동이 안 나온다 — 그래서 경로상 신호(1489)를
+  초록으로 고정해 매번 같은 속도로 접근시킨다. 장애물이 차선을 막고 있으므로 완주는 하지 않는다(시간 초과로 끝난다). 필요한 것은 접근·정지 구간의 감속도와 저크다.
+goal:
+  x: 81470.3
+  y: 49980.1
+  z: 41.5
+  yaw: 0.6
+timeout_s: 60
+objects:
+- x: 81422.11
+  y: 49946.84
+  z: 41.3
+  yaw: 0.6
+  label: 1
+  velocity: 0.0
+criteria:
+  min:
+    mid_stops: 1
+traffic_override:
+  group_ids:
+  - 1489
+  color: GREEN

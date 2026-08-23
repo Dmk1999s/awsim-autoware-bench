@@ -16,7 +16,7 @@
 >
 > **Load 버튼 자동 클릭** (이전에 "GUI 필수"로 남겼던 항목):
 > ```bash
-> DISPLAY=:20 xdotool mousemove 1394 937 click 1
+> DISPLAY=:20 xdotool mousemove 1798 1013 click 1
 > ```
 >
 > **`cyclonedds.xml` 주의** — `AllowMulticast` 는 `spdp` 여야 하고(과금),
