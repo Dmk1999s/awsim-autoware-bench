@@ -32,6 +32,9 @@ METRICS = [
     ("|횡편차| p95(수렴후)", lambda r: r["lat_p95"],     "cm",    True),
     ("|횡편차| RMS(수렴후)", lambda r: r["lat_rms"],     "cm",    True),
     ("|저크| p95",         lambda r: r["jerk_p95"],      "m/s³",  True),
+    # 횡오차 가중치를 올리면 조향을 더 세게 쓴다. 그 대가가 여기서 드러난다.
+    ("|조향속도| p95",     lambda r: r["steer_rate_p95"], "rad/s", True),
+    ("|횡가속| p95",       lambda r: r["lat_acc_p95"],   "m/s²",  True),
     ("최근접 객체 최소",   lambda r: r["min_obj"],       "m",     False),
     ("목표 오차(종)",      lambda r: r["goal_lon"],      "m",     True),
     ("주행 중 정지",       lambda r: r["mid_stops"],     "회",    True),
@@ -104,6 +107,8 @@ def summarize(path):
     _, lat = clip(t_lat_all, lat_all, t_settle)
     _, jerk = clip(*get(s, "control", "jerk"), max(t_auto, t_settle))
     _, obj = clip(*get(s, "control", "closest_object_distance"), t_auto)
+    _, steer_rate = clip(*get(s, "control", "steering_rate"), max(t_auto, t_settle))
+    _, lat_acc = clip(*get(s, "control", "lateral_acceleration_abs"), max(t_auto, t_settle))
     _, goal = get(s, "control", "goal_longitudinal_deviation_abs")
 
     duration = float(t_v[-1]) if len(t_v) else float("nan")
@@ -134,6 +139,8 @@ def summarize(path):
         "lat_p95": float(np.percentile(np.abs(lat), 95) * 100) if len(lat) else float("nan"),
         "lat_rms": float(np.sqrt((lat ** 2).mean()) * 100) if len(lat) else float("nan"),
         "jerk_p95": float(np.percentile(np.abs(jerk), 95)) if len(jerk) else float("nan"),
+        "steer_rate_p95": float(np.percentile(np.abs(steer_rate), 95)) if len(steer_rate) else float("nan"),
+        "lat_acc_p95": float(np.percentile(np.abs(lat_acc), 95)) if len(lat_acc) else float("nan"),
         "min_obj": float(obj.min()) if len(obj) else float("nan"),
         "goal_lon": float(goal[-1]) if len(goal) else float("nan"),
         "mid_stops": float(len(mid)),
@@ -162,10 +169,21 @@ def read_list(path):
     return [str(p)]
 
 
-def fmt(v, unit):
+def fmt(v):
+    """값 크기에 맞춰 자릿수를 정한다.
+
+    조향속도처럼 0.02 rad/s 규모인 지표를 소수 2자리로 찍으면 변화가 반올림으로 사라진다.
+    """
     if v != v:  # NaN
         return "—"
-    return f"{v:.2f}" if unit != "회" else f"{v:.0f}"
+    a = abs(v)
+    if a >= 100:
+        return f"{v:.1f}"
+    if a >= 1:
+        return f"{v:.2f}"
+    if a >= 0.01:
+        return f"{v:.4f}"
+    return f"{v:.6f}"
 
 
 def spread_table(runs, title):
@@ -178,8 +196,8 @@ def spread_table(runs, title):
         vals = vals[~np.isnan(vals)]
         if not len(vals):
             continue
-        L.append(f"| {label} [{unit}] | {vals.mean():.2f} | {vals.std():.2f} | "
-                 f"{vals.min():.2f} | {vals.max():.2f} | {vals.max()-vals.min():.2f} |")
+        L.append(f"| {label} [{unit}] | {fmt(vals.mean())} | {fmt(vals.std())} | "
+                 f"{fmt(vals.min())} | {fmt(vals.max())} | {fmt(vals.max()-vals.min())} |")
     return L
 
 
@@ -204,7 +222,8 @@ def ab_table(a, b, label_a, label_b):
         else:
             better = (diff < 0) == lower_better
             verdict = "**개선**" if better else "**악화**"
-        L.append(f"| {lab} [{unit}] | {ma:.2f} | {mb:.2f} | {diff:+.2f} | {verdict} |")
+        pct = f" ({diff/ma*100:+.0f}%)" if ma else ""
+        L.append(f"| {lab} [{unit}] | {fmt(ma)} | {fmt(mb)} | {fmt(diff)}{pct} | {verdict} |")
     L += ["", "> 판정 기준: A 의 반복 편차(최대-최소)보다 차이가 커야 변화로 본다.",
           "> 그보다 작으면 같은 조건에서도 그만큼 흔들리므로 노이즈와 구분되지 않는다.", ""]
     return L

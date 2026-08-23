@@ -38,7 +38,8 @@ AWSIM_EGO_RESET_XY = (566, 504)      # Ego Vehicle 리셋 — 스폰 좌표로 �
 AWSIM_TRAFFIC_RESET_XY = (643, 611)  # Traffic 리셋 — 시드대로 NPC 재배치
 AWSIM_DISPLAY = ":20"
 
-LOCALIZATION_TOLERANCE_M = 0.5   # 정답 대비 이보다 어긋나면 출발시키지 않는다
+LOCALIZATION_TOLERANCE_M = 0.5
+ENGAGE_ATTEMPTS = 5              # 전환이 간헐적으로 거부된다 — 아래 주석 참고   # 정답 대비 이보다 어긋나면 출발시키지 않는다
 
 
 class ScenarioRunner(Node):
@@ -54,6 +55,7 @@ class ScenarioRunner(Node):
 
         self.route_state = None
         self.auto_available = False
+        self.auto_seq = 0   # 새 메시지인지 가리기 위한 카운터
         self.est = None    # NDT 추정 위치
         self.truth = None  # AWSIM 정답 위치
 
@@ -65,8 +67,7 @@ class ScenarioRunner(Node):
         self.create_subscription(RouteState, "/api/routing/state",
                                  lambda m: setattr(self, "route_state", m.state), latched)
         self.create_subscription(
-            OperationModeState, "/api/operation_mode/state",
-            lambda m: setattr(self, "auto_available", m.is_autonomous_mode_available), latched)
+            OperationModeState, "/api/operation_mode/state", self.on_operation_mode, latched)
         self.create_subscription(Odometry, "/localization/kinematic_state",
                                  lambda m: setattr(self, "est", m.pose.pose.position), 10)
         # AWSIM 의 정답 위치는 BEST_EFFORT 로 발행된다. 기본값(RELIABLE)으로 구독하면
@@ -86,6 +87,10 @@ class ScenarioRunner(Node):
             "auto": self.create_client(ChangeOperationMode,
                                        "/api/operation_mode/change_to_autonomous"),
         }
+
+    def on_operation_mode(self, msg):
+        self.auto_available = msg.is_autonomous_mode_available
+        self.auto_seq += 1
 
     # ---- 도구 ----
 
@@ -165,18 +170,36 @@ class ScenarioRunner(Node):
         status = self.call("route", req)
         if not status.success:
             raise RuntimeError(f"경로 설정 거부: code={status.code} {status.message}")
+        # routing/state 는 변화할 때만 발행된다. 구독 시점에 받은 지난 주행의 ARRIVED 가
+        # 남아 있으면 drive() 가 즉시 "도착"으로 판정한다. 서비스가 성공했으므로 SET 으로 덮는다.
+        self.route_state = RouteState.SET
         self.get_logger().info(f"경로 설정 → ({g['x']}, {g['y']})")
 
     def engage(self):
         # 경로를 넣은 직후에는 자율주행이 아직 준비되지 않는다. 계획이 trajectory 를
         # 내놓아야 is_autonomous_mode_available 이 켜지고, 그 전에 부르면
-        # "The target mode is not available" 로 거부된다. 고정 대기 대신 준비를 기다린다.
-        if not self.wait_until(lambda: self.auto_available, 60.0, "자율주행 준비"):
-            raise RuntimeError("자율주행 모드가 준비되지 않음 — 계획이 경로를 못 풀었을 수 있다")
-        status = self.call("auto", ChangeOperationMode.Request())
-        if not status.success:
-            raise RuntimeError(f"자율주행 전환 실패: {status.message}")
-        self.get_logger().info("자율주행 전환")
+        # "The target mode is not available" 로 거부된다.
+        #
+        # 그런데 이 토픽은 TRANSIENT_LOCAL 이라 **구독하는 순간 지난 주행의 마지막 값**이
+        # 먼저 들어온다. 러너는 회차마다 새 프로세스로 뜨므로, 그 묵은 true 를 보고
+        # 대기를 통과해버린 뒤 전환이 거부됐다 (w20 배치 5회 중 2회가 이렇게 실패).
+        # 그래서 "지금 시점 이후에 새로 온 메시지"만 인정한다.
+        # 게다가 이 플래그가 true 여도 서비스가 거부하는 경우가 있다 — 플래그와 실제
+        # 상태머신 사이에 잠깐 틈이 있다. 관측상 mpc_weight_lat_error 를 20 으로 올렸을 때만
+        # 나타났고(1.0/5.0 배치에서는 0회), 제어 검증이 걸리는 것으로 보인다.
+        # 몇 번 만에 붙었는지를 남겨 가중치별로 비교할 수 있게 한다.
+        for attempt in range(1, ENGAGE_ATTEMPTS + 1):
+            seq0 = self.auto_seq
+            if not self.wait_until(lambda: self.auto_seq > seq0 + 1 and self.auto_available,
+                                   60.0, "자율주행 준비"):
+                raise RuntimeError("자율주행 모드가 준비되지 않음 — 계획이 경로를 못 풀었을 수 있다")
+            status = self.call("auto", ChangeOperationMode.Request())
+            if status.success:
+                self.get_logger().info(f"자율주행 전환 (시도 {attempt}회)")
+                return
+            self.get_logger().warn(f"전환 거부 ({attempt}/{ENGAGE_ATTEMPTS}): {status.message}")
+            self.spin(3.0)
+        raise RuntimeError(f"자율주행 전환 실패 — {ENGAGE_ATTEMPTS}회 시도")
 
     def drive(self):
         timeout = self.spec.get("timeout_s", 300)

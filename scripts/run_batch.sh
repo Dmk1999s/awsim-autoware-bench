@@ -11,17 +11,23 @@ OUT=/workspace/runs/batch_${TAG}.txt
 for i in $(seq 1 "$N"); do
   echo "=== [$i/$N] $(date -u +%H:%M:%S) ==="
   BEFORE=$(ls -1 /workspace/runs/run_*.csv 2>/dev/null | wc -l)
-  if bash /workspace/scripts/run_scenario.sh "$SCENARIO" 2>&1 | grep -E 'scenario_runner\]' | sed 's/.*\[scenario_runner\]: //'; then
-    :
-  fi
+  # 러너가 실패해도 수집기는 CSV 를 남긴다 (경로 SET 은 됐으므로).
+  # CSV 존재로 성공을 세면 차가 한 발짝도 안 간 주행이 배치에 섞인다 — 실제로 그렇게 셌었다.
+  # 러너의 종료코드로 판정한다.
+  set +e
+  bash /workspace/scripts/run_scenario.sh "$SCENARIO" 2>&1 \
+    | grep -E 'scenario_runner\]' | sed 's/.*\[scenario_runner\]: //'
+  RC=${PIPESTATUS[0]}
+  set -e
   sleep 4
   AFTER=$(ls -1 /workspace/runs/run_*.csv 2>/dev/null | wc -l)
-  if [ "$AFTER" -gt "$BEFORE" ]; then
-    NEW=$(ls -1t /workspace/runs/run_*.csv | head -1)
+  NEW=$(ls -1t /workspace/runs/run_*.csv 2>/dev/null | head -1)
+  if [ "$RC" -eq 0 ] && [ "$AFTER" -gt "$BEFORE" ]; then
     echo "$NEW" >> "$OUT"
     echo "  → $(basename "$NEW")"
   else
-    echo "  → CSV 없음 (실패)"
+    echo "  → 실패 (종료코드 $RC) — 배치에서 제외"
+    [ "$AFTER" -gt "$BEFORE" ] && echo "$NEW" >> "${OUT%.txt}_failed.txt"
   fi
 done
 echo "=== 완료: $(wc -l < "$OUT")/$N 회 성공 → $OUT ==="
