@@ -283,8 +283,26 @@ class ScenarioRunner(Node):
         timeout = self.spec.get("timeout_s", 300)
         t0 = time.time()
 
-        # 신호 강제 실험: 빨강을 계속 발행 → 정지 확인 → 초록으로 전환 → 통과 관찰.
         tl = self.spec.get("traffic_override")
+
+        # 상시 강제 (hold_stop_s 없음): 지정 색을 도착까지 계속 발행.
+        # 앞차 추종 실험에서 쓴다 — 더미 앞차는 신호를 무시하므로, 자차만 빨간불에
+        # 걸리면 추종이 아니라 추격이 된다 (실측: 15초 정차 동안 앞차가 22 m 도망).
+        if tl and "hold_stop_s" not in tl:
+            color = getattr(TrafficLightElement, tl.get("color", "GREEN"))
+            self.get_logger().info(f"신호 상시 강제: 그룹 {tl['group_ids']} {tl.get('color','GREEN')}")
+            last_pub = 0.0
+            while time.time() - t0 < timeout:
+                rclpy.spin_once(self, timeout_sec=0.1)
+                if time.time() - last_pub > 0.4:
+                    self.publish_signal(tl["group_ids"], color)
+                    last_pub = time.time()
+                if self.route_state == RouteState.ARRIVED:
+                    return True, time.time() - t0
+            self.get_logger().error(f"시간 초과 ({timeout}s)")
+            return False, time.time() - t0
+
+        # 신호 강제 실험: 빨강을 계속 발행 → 정지 확인 → 초록으로 전환 → 통과 관찰.
         if tl:
             gids = tl["group_ids"]
             hold = tl.get("hold_stop_s", 8)
