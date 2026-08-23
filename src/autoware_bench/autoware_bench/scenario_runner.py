@@ -444,29 +444,21 @@ class ScenarioRunner(Node):
             f"{len(seen)}개) — AWSIM 더미 기능이 죽었을 수 있다. AWSIM 재기동 필요")
 
     def refresh_objects(self):
-        """AWSIM 더미 객체는 **스폰 후 약 30 초면 스스로 사라진다** (실측 30.5·30.8 s).
-        MODIFY 로도 갱신되지 않는다. 자차가 도달하기 전에 없어지면 차는 빈 도로를 달리고,
-        그 주행이 "장애물 시나리오 통과"로 기록된다 — 실측 5회 연속 그랬다 (WORKLOG 26).
-        그래서 25 초마다 지우고 다시 심는다. 정지 객체만 대상이다 (움직이는 객체를 다시
-        심으면 위치가 되돌아가 추종 실험이 깨진다).
+        """AWSIM 더미 객체는 스폰 후 약 30 초면 스스로 사라진다 (실측 30.0·30.5·30.8 s).
+        자차가 도달하기 전에 없어지면 차는 빈 도로를 달리고, 그 주행이 "장애물 시나리오
+        통과"로 기록된다 (WORKLOG 26). 그래서 20 초마다 같은 자리에 겹쳐 심는다.
+        정지 객체만 대상이다 — 움직이는 객체를 다시 심으면 위치가 되돌아간다.
+
+        **옛것을 지우지 않는다.** DELETE 를 보내면 같은 자리의 새 객체까지 함께 사라진다
+        (WORKLOG 30 실측: 겹쳐 심어 지도대조 점군 44→74, 옛것 DELETE 직후 0).
+        수명으로 죽는 것은 자기 것만 데려간다 (74→34→0). 그래서 그냥 두고 죽게 둔다.
         """
         statics = [(u, o) for u, o in self.spawned if not o.get("velocity")]
         if not statics or time.time() - self.spawn_time < 20.0:
             return
-        # **먼저 새로 심고, 그다음 옛것을 지운다.** 반대로 하면 그 사이에 객체가 없는 순간이
-        # 생기고, 그때 계획이 정지를 풀어 차가 그대로 지나간다 (실측 5회 중 3회 관통).
         self.spawn_objects([o for _, o in statics], quiet=True)
-        self.spin(0.5)
-        for uid, _ in statics:
-            msg = DummyObject()
-            msg.header.frame_id = "map"
-            msg.header.stamp = self.get_clock().now().to_msg()
-            msg.id.uuid = uid
-            msg.action = DummyObject.DELETE
-            self.obj_pub.publish(msg)
-        self.spawned = [(u, o) for u, o in self.spawned
-                        if o.get("velocity") or (u, o) not in statics]
-        self.get_logger().info(f"객체 다시 심음 ({len(statics)}개) — 수명 30 초 대응")
+        self.spawned = [(u, o) for u, o in self.spawned if (u, o) not in statics]
+        self.get_logger().info(f"객체 겹쳐 심음 ({len(statics)}개) — 옛것은 수명으로 사라진다")
 
     def publish_signal(self, group_ids, color):
         msg = TrafficLightGroupArray()
