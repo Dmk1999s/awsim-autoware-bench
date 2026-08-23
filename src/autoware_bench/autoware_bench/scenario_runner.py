@@ -45,7 +45,12 @@ from autoware_adapi_v1_msgs.srv import (
 # 선 채로 다음 회차가 시작돼 "0.0 초 완주"가 성공으로 기록된다 (실측 8회차 손실).
 AWSIM_EGO_RESET_REL = (115, 318)      # Ego Vehicle 의 ↻ — 스폰 좌표로 복귀
 AWSIM_TRAFFIC_RESET_REL = (194, 426)  # Traffic Control 의 ↻ — 시드대로 NPC 재배치
+AWSIM_MENU_REL = (25, 23)             # ☰ — 재기동 직후에는 메뉴가 접혀 있어 버튼이 없다
 AWSIM_DISPLAY = ":20"
+# AWSIM 런처의 Ego Position 기본값. 리셋이 실제로 먹었는지 확인하는 기준점이다 —
+# 클릭이 빗나가도 아무 일도 일어나지 않으므로 결과를 봐야 안다 (WORKLOG 15·25).
+AWSIM_SPAWN_XY = (81380.72, 49918.78)
+SPAWN_TOLERANCE_M = 3.0
 MIN_STRAIGHT_M = 20.0                 # 목적지가 이보다 가까우면 리셋 실패를 의심한다
 
 MAP_OSM = "/root/awsim/nishishinjuku_autoware_map/lanelet2_map.osm"
@@ -100,6 +105,8 @@ class ScenarioRunner(Node):
         self.auto_seq = 0   # 새 메시지인지 가리기 위한 카운터
         self.est = None    # NDT 추정 위치
         self.truth = None  # AWSIM 정답 위치
+        self.spawned = []      # (uuid, 스펙) — 수명이 다하기 전에 다시 심으려고 들고 있는다
+        self.spawn_time = 0.0
         self.route = None
         self.route_seq = 0  # TRANSIENT_LOCAL 이라 지난 주행의 경로가 먼저 온다 — 새 것만 인정
 
@@ -177,6 +184,7 @@ class ScenarioRunner(Node):
         end = time.time() + timeout
         while time.time() < end:
             rclpy.spin_once(self, timeout_sec=0.1)
+            self.refresh_objects()
             if predicate():
                 return True
         self.get_logger().error(f"시간 초과: {label} ({timeout}s)")
@@ -218,20 +226,51 @@ class ScenarioRunner(Node):
                        env={"DISPLAY": AWSIM_DISPLAY, "PATH": "/usr/bin:/bin"}, check=True)
 
     def reset_ego(self):
-        """차와 NPC 교통을 둘 다 출발 상태로 되돌린다.
+        """차와 NPC 교통을 둘 다 출발 상태로 되돌리고, **정말 되돌아갔는지 확인한다**.
 
         교통까지 리셋하는 이유: 시드를 고정해도 앞 주행이 흘려놓은 NPC 배치가 남아 있으면
         회차마다 조건이 다르다. 실제로 교통을 두고 5회 돌렸을 때 주행 시간이
         40.3~65.1 s (폭 24.8 s) 로 흔들렸고, 그 폭이 파라미터 효과를 덮을 만큼 컸다.
+
+        확인하는 이유: 이 클릭은 두 번 조용히 빗나갔다 — 창을 최대화했을 때(WORKLOG 15)와
+        재기동 직후 메뉴가 접혀 있을 때(WORKLOG 25). 둘 다 아무 일도 일어나지 않고,
+        차는 지난 주행의 도착지에 그대로 서 있는다.
         """
-        self._click(AWSIM_TRAFFIC_RESET_REL)
-        self.spin(1.0)
-        self._click(AWSIM_EGO_RESET_REL)
-        self.get_logger().info("AWSIM 리셋 (교통 + ego)")
-        self.spin(5.0)
+        for attempt in (1, 2):
+            self._click(AWSIM_TRAFFIC_RESET_REL)
+            self.spin(1.0)
+            self._click(AWSIM_EGO_RESET_REL)
+            self.spin(4.0)
+            if self.at_spawn():
+                self.get_logger().info(f"AWSIM 리셋 확인 (시도 {attempt}회)")
+                return
+            if attempt == 1:
+                # 메뉴가 접혀 있으면 버튼이 화면에 없다. ☰ 를 눌러 펴고 다시 시도한다.
+                self.get_logger().warn("리셋이 안 먹었다 — 메뉴가 접혀 있는지 확인하고 재시도")
+                self._click(AWSIM_MENU_REL)
+                self.spin(1.5)
+        raise RuntimeError(
+            "AWSIM 리셋 실패 — 차가 스폰 위치로 돌아가지 않았다. "
+            "메뉴 위치나 창 상태를 확인할 것")
+
+    def at_spawn(self):
+        end = time.time() + 6.0
+        while time.time() < end:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            if self.truth is not None:
+                d = math.hypot(self.truth.x - AWSIM_SPAWN_XY[0], self.truth.y - AWSIM_SPAWN_XY[1])
+                if d < SPAWN_TOLERANCE_M:
+                    return True
+        return False
 
     def reinit_localization(self):
-        """빈 pose = GNSS 자동 초기화. 그다음 정답과 대조해 실제로 수렴했는지 본다."""
+        """빈 pose = GNSS 자동 초기화. 그다음 정답과 대조해 실제로 수렴했는지 본다.
+
+        리셋 직후에는 차가 아직 구르고 있어 초기화가 "The vehicle is not stopped" 로
+        거부된다 (실측 3회 중 2회). 멈출 때까지 기다린다.
+        """
+        if not self.wait_until(lambda: abs(self.est_vel) < 0.05, 15.0, "리셋 후 정차"):
+            self.get_logger().warn("정차 확인 실패 — 그대로 초기화를 시도한다")
         status = self.call("init", InitializeLocalization.Request(pose=[]))
         if not status.success:
             raise RuntimeError(f"위치추정 초기화 실패: {status.message}")
@@ -323,7 +362,7 @@ class ScenarioRunner(Node):
         self.obj_pub.publish(msg)
         self.spin(1.0)
 
-    def spawn_objects(self, objs=None):
+    def spawn_objects(self, objs=None, quiet=False):
         """시나리오의 objects: 목록(또는 지정 목록)을 씬에 스폰한다."""
         if objs is None:
             objs = self.spec.get("objects", [])
@@ -332,6 +371,7 @@ class ScenarioRunner(Node):
             msg.header.frame_id = "map"
             msg.header.stamp = self.get_clock().now().to_msg()
             msg.id.uuid = list(uuid_lib.uuid4().bytes)
+            self.spawned.append((list(msg.id.uuid), o))
             msg.action = DummyObject.ADD
             p = msg.initial_state.pose_covariance.pose
             p.position.x, p.position.y = float(o["x"]), float(o["y"])
@@ -350,10 +390,12 @@ class ScenarioRunner(Node):
             msg.max_velocity = float(o.get("velocity", 0.0))
             msg.min_velocity = 0.0
             self.obj_pub.publish(msg)
-            self.get_logger().info(
-                f"객체 스폰: label={msg.classification.label} ({o['x']:.1f}, {o['y']:.1f}) "
-                f"v={o.get('velocity', 0.0)}")
+            if not quiet:
+                self.get_logger().info(
+                    f"객체 스폰: label={msg.classification.label} ({o['x']:.1f}, {o['y']:.1f}) "
+                    f"v={o.get('velocity', 0.0)}")
         if objs:
+            self.spawn_time = time.time()
             self.spin(2.0)
 
     def verify_spawn(self, objs, timeout=15.0):
@@ -378,6 +420,26 @@ class ScenarioRunner(Node):
         raise RuntimeError(
             f"스폰한 객체가 인지되지 않는다 ({len(targets)}개 중 "
             f"{len(seen)}개) — AWSIM 더미 기능이 죽었을 수 있다. AWSIM 재기동 필요")
+
+    def refresh_objects(self):
+        """AWSIM 더미 객체는 **스폰 후 약 30 초면 스스로 사라진다** (실측 30.5·30.8 s).
+        MODIFY 로도 갱신되지 않는다. 자차가 도달하기 전에 없어지면 차는 빈 도로를 달리고,
+        그 주행이 "장애물 시나리오 통과"로 기록된다 — 실측 5회 연속 그랬다 (WORKLOG 26).
+        그래서 25 초마다 지우고 다시 심는다. 정지 객체만 대상이다 (움직이는 객체를 다시
+        심으면 위치가 되돌아가 추종 실험이 깨진다).
+        """
+        statics = [(u, o) for u, o in self.spawned if not o.get("velocity")]
+        if not statics or time.time() - self.spawn_time < 25.0:
+            return
+        for uid, _ in statics:
+            msg = DummyObject()
+            msg.header.frame_id = "map"
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.id.uuid = uid
+            msg.action = DummyObject.DELETE
+            self.obj_pub.publish(msg)
+        self.spawned = [(u, o) for u, o in self.spawned if o.get("velocity")]
+        self.spawn_objects([o for _, o in statics], quiet=True)
 
     def publish_signal(self, group_ids, color):
         msg = TrafficLightGroupArray()
@@ -409,6 +471,7 @@ class ScenarioRunner(Node):
             last_pub = 0.0
             while time.time() - t0 < timeout:
                 rclpy.spin_once(self, timeout_sec=0.1)
+                self.refresh_objects()
                 if time.time() - last_pub > 0.4:
                     self.publish_signal(tl["group_ids"], color)
                     last_pub = time.time()
@@ -427,6 +490,7 @@ class ScenarioRunner(Node):
             self.get_logger().info(f"신호 강제: 그룹 {gids} 빨강")
             while time.time() - t0 < timeout:
                 rclpy.spin_once(self, timeout_sec=0.1)
+                self.refresh_objects()
                 now = time.time()
                 if now - last_pub > 0.4:   # arbiter 는 갱신이 끊긴 외부 신호를 무시한다
                     self.publish_signal(
@@ -459,6 +523,7 @@ class ScenarioRunner(Node):
             stop_started = None
             while time.time() - t0 < timeout:
                 rclpy.spin_once(self, timeout_sec=0.1)
+                self.refresh_objects()
                 moving = abs(self.est_vel) > 0.1
                 if moving:
                     stop_started = None
