@@ -581,6 +581,11 @@ def main():
     except (RuntimeError, SystemExit) as e:
         node.get_logger().error(str(e))
         code = 2
+    except Exception as e:  # noqa: BLE001 — 예상 밖 예외도 로그로 남겨야 배치에서 진단된다
+        # 로그를 grep 으로 걸러 보기 때문에, 트레이스백만 남으면 배치 로그에서 사라진다.
+        # 실측: xdotool 실패로 러너가 죽었는데 배치에는 "실패 (종료코드 1)" 만 남았다.
+        node.get_logger().error(f"예상 밖 예외: {type(e).__name__}: {e}")
+        code = 2
     finally:
         node.destroy_node()
         rclpy.shutdown()
