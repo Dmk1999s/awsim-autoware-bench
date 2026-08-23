@@ -9,7 +9,7 @@ import argparse
 import collections
 import csv
 
-STAGES = ["cluster", "centerpoint", "track", "predict"]
+STAGES = ["cluster", "centerpoint", "track", "predict", "shadow"]
 
 
 def load(path, radius):

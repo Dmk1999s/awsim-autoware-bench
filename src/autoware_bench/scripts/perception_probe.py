@@ -72,7 +72,7 @@ def yaw_of(q):
 
 
 class Probe(Node):
-    def __init__(self, tx, ty, out, radius, clouds):
+    def __init__(self, tx, ty, out, radius, clouds, shadow=None):
         super().__init__("perception_probe")
         self.tx, self.ty, self.radius = tx, ty, radius
         self.ego = None          # (x, y, yaw)
@@ -95,6 +95,11 @@ class Probe(Node):
         self.create_subscription(
             PredictedObjects, "/perception/object_recognition/objects",
             lambda m: self.on_objects(m, "predict"), rel)
+
+        if shadow:
+            # 같은 질문을 별도로 띄운 추적기에도 던진다 (군집 채널을 켠 그림자 추적기).
+            self.create_subscription(
+                TrackedObjects, shadow, lambda m: self.on_objects(m, "shadow"), rel)
 
         if clouds:
             # 점군은 무겁다. 부하 자체가 이 실험의 변수라 기본으로는 끈다.
@@ -151,7 +156,7 @@ class Probe(Node):
             # 군집·검출·추적 단계의 물체를 위치와 크기까지 남긴다.
             # 「군집이 잡은 차 크기 물체를 ML 이 얼마나 받아 주는가」를 재려면
             # 단계별 물체 목록을 나란히 놓고 봐야 한다.
-            if stage in ("cluster", "centerpoint", "track"):
+            if stage in ("cluster", "centerpoint", "track", "shadow"):
                 oid = bytes(o.object_id.uuid[:4]).hex() if hasattr(o, "object_id") else "-"
                 self.write(msg.header.stamp, f"o_{stage}", f"{oid}/box",
                            f"{xy[0]:.2f} {xy[1]:.2f} {extent(o.shape)}")
@@ -184,11 +189,12 @@ def main():
     ap.add_argument("--seconds", type=float, default=120.0)
     ap.add_argument("--radius", type=float, default=3.5)
     ap.add_argument("--clouds", action="store_true")
+    ap.add_argument("--shadow", help="비교용 추적기 출력 토픽 (TrackedObjects)")
     a = ap.parse_args()
     tx, ty = (float(v) for v in a.target.split(","))
 
     rclpy.init()
-    node = Probe(tx, ty, a.out, a.radius, a.clouds)
+    node = Probe(tx, ty, a.out, a.radius, a.clouds, a.shadow)
     end = time.time() + a.seconds
     try:
         while rclpy.ok() and time.time() < end:
