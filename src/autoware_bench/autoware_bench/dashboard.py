@@ -95,12 +95,10 @@ class Dashboard(Node):
                                  self.on_objects, 10)
         self.create_subscription(Trajectory, "/planning/trajectory",
                                  lambda _m: self.rate_traj.tick(), 1)
-        # AWSIM 카메라는 BEST_EFFORT 로 발행된다. 기본 QoS 로 구독하면 한 장도 안 온다
-        # (경고만 뜨고 조용히 빈다 — 러너에서 겪은 것과 같은 함정).
-        sensor = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.BEST_EFFORT,
-                            durability=QoSDurabilityPolicy.VOLATILE)
-        self.create_subscription(Image, "/sensing/camera/traffic_light/image_raw",
-                                 self.on_image, sensor)
+        # 카메라는 보는 사람이 있을 때만 구독한다. 1920x1080 BGR 한 장이 6 MB 라
+        # 상시 구독하면 아무도 안 봐도 초당 수십 MB 를 복사한다 (실측 CPU 23%).
+        self.cam_sub = None
+        self.cam_wanted = 0.0     # 마지막 /camera.jpg 요청 시각 (monotonic)
 
         self.create_timer(0.5, self.on_timer)
 
@@ -163,6 +161,23 @@ class Dashboard(Node):
             self.state["objects"] = len(msg.objects)
             self.state["closest"] = round(best, 1) if best is not None else None
 
+    def cam_subscribe(self, on):
+        """구독 생성·해제는 타이머(실행기 스레드)에서만 한다 — HTTP 스레드에서 만지면 위험하다."""
+        if on and self.cam_sub is None:
+            # AWSIM 카메라는 BEST_EFFORT 다. 기본 QoS 로 구독하면 한 장도 안 온다
+            # (경고만 뜨고 조용히 빈다 — 러너에서 겪은 것과 같은 함정).
+            sensor = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.BEST_EFFORT,
+                                durability=QoSDurabilityPolicy.VOLATILE)
+            self.cam_sub = self.create_subscription(
+                Image, "/sensing/camera/traffic_light/image_raw", self.on_image, sensor)
+            self.get_logger().info("카메라 구독 시작")
+        elif not on and self.cam_sub is not None:
+            self.destroy_subscription(self.cam_sub)
+            self.cam_sub = None
+            with self.lock:
+                self.frame = None
+            self.get_logger().info("카메라 구독 해제 (보는 사람 없음)")
+
     def on_image(self, msg):
         """원본만 들고 있다가 브라우저가 요청할 때 인코딩한다 — 아무도 안 보면 비용 0."""
         if msg.encoding not in ("bgr8", "rgb8"):
@@ -172,6 +187,7 @@ class Dashboard(Node):
             self.frame = (bytes(msg.data), msg.width, msg.height, msg.encoding)
 
     def jpeg(self, width=720, quality=6):
+        self.cam_wanted = time.monotonic()
         """ffmpeg 로 인코딩한다. cv2 는 이 컨테이너에서 못 쓴다 — apt 의 cv2(4.5.4)가
         numpy 1.x 로 빌드됐는데 /usr/local 에 numpy 2.2.5 가 깔려 있어 import 가 깨진다.
         전역 numpy 를 내리면 분석 스크립트(compare_runs 등)가 깨지므로 건드리지 않는다."""
@@ -193,6 +209,8 @@ class Dashboard(Node):
 
     def on_timer(self):
         """기록 상태는 토픽이 아니라 파일에서 본다 — 수집기와 결합하지 않으려고."""
+        # 마지막 요청 후 10초가 지나면 카메라 구독을 끊는다 (탭을 닫으면 요청도 끊긴다)
+        self.cam_subscribe(time.monotonic() - self.cam_wanted < 10.0)
         run = None
         try:
             files = sorted(self.runs_dir.glob("run_*.csv"), key=lambda p: p.stat().st_mtime)

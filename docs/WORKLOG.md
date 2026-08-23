@@ -619,3 +619,41 @@ WebRTC 와 다른 점이다.
 
 **남는 교훈.** GUI 클릭에 의존하는 자동화는 좌표가 아니라 **결과를 검증**해야 한다.
 지금은 리셋 자체를 확인하지는 않고(스폰 좌표를 알아야 한다) 경로 길이로 간접 확인한다.
+
+
+### 16. 「자율주행 가능」이 초당 두 번 뒤집히는 이유 — 지표가 아니라 부하였다
+
+**증상.** 대시보드의 `자율주행 가능` 이 예/아니오를 계속 왔다갔다 한다.
+
+**추적.** 그 값은 `/api/operation_mode/state` 의 `is_autonomous_mode_available` 이고,
+`/system/operation_mode/availability` 와 정확히 같이 움직인다 (30초에 **127회** 뒤집힘,
+`autonomous=false` 가 전체의 56%). availability 는 진단 그래프에서 나오므로 그래프를 훑었다:
+
+| 빈도 | 항목 | 메시지 |
+|---:|---|---|
+| 291 | `localization: ekf_localizer` WARN | `pose topic is delay; mahalanobis distance of pose topic is large` |
+| 586 | `gyro_bias_scale_validator` ERROR | 짧은 시간에 자이로 스케일 급변 |
+| 349 | `concatenate_data` ERROR | 라이다 포인트클라우드 일부 토픽 누락·드롭 |
+
+`sensor_fusion_status`(= ekf_localizer)가 WARN 이 되면 `/autoware/localization` →
+`/autoware/modes/autonomous` 가 WARN 이 되고 availability 가 false 로 떨어진다.
+지연이 풀리면 다시 true — 그래서 깜빡인다.
+
+**근본 원인은 CPU 부족이다.** NDT 자세 추정이 **5.2 Hz** 밖에 안 나온다(기대 10 Hz).
+12코어에 load average 22~31, 그중 **RViz 혼자 304%** 였다.
+
+| | NDT 자세 [Hz] | availability=false 비율 | 30초당 뒤집힘 |
+|---|---:|---:|---:|
+| RViz 켬 | 5.2 | 56% | 127 |
+| RViz 끔 | 6.5 | 43% | 136 |
+
+RViz 를 끄면 나아지지만 없어지지는 않는다 — 라이다 3개 + NDT + 렌더링이 이 인스턴스에
+빠듯하다는 뜻이다.
+
+**주행에는 지장이 없다.** 이 플래그는 자율주행으로 **들어갈 수 있는가**만 가리키므로,
+이미 AUTONOMOUS 면 차는 계속 간다. 다만 러너가 engage 전에 이 플래그를 기다리므로,
+간헐적인 `자율주행 준비 60s 초과` 와 전환 거부(러너 주석에 적어둔 그것)의 정체가 이것이다.
+
+**부수.** 대시보드가 카메라를 상시 구독하면 1920×1080 BGR 6 MB 를 초당 여러 장 복사해
+CPU 22% 를 쓴다. 보는 사람이 있을 때만(마지막 요청 후 10초) 구독하도록 고쳤다 —
+아무도 안 보면 0%. 부하가 지표를 흔드는 환경에서는 모니터 자신도 비용이다.
