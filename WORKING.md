@@ -16,13 +16,10 @@
   - 요약 표: 시간·거리·속도·횡편차(max/p95/RMS)·저크(max/p95)·목표 도착 오차
   - 정지 구간을 **출발 대기 / 도착 정지 / 주행 중 정지**로 구분
   - 3회차 CSV로 검증 — 91.0 m, 38.54 s, |횡편차| max 3.5 cm, 주행 중 정지 0회
-- [ ] **정지 사유 수집 — 우선순위 최상** — "어느 모듈이 왜 세웠는지"는
-      `/planning/velocity_factors`에 있고 `metrics_collector`가 아직 구독하지 않는다.
-      2026-08-22 검증 주행에서 **주행 중 정지가 5회(최장 21.2초)** 나왔는데
-      전부 이유를 모른 채로 남았다. STEP 6(신호등·장애물·교차로)은 이것 없이는 측정이 안 된다
-- [ ] **`criteria.yaml` + 판정** — 임계값은 3회 이상 주행 데이터를 본 뒤 정한다.
-      근거 없는 숫자를 먼저 박지 않기 위함
-- [ ] 회차 간 비교 — "이번 주행이 지난번보다 나아졌나"에 답하기
+- [x] **정지 사유 수집** — `/api/planning/velocity_factors` 구독. 정지 구간마다 세운 모듈 귀속
+- [x] **`criteria.yaml` + 판정** — 기본 파라미터 10회 관측치에서 임계값 도출, `check_criteria.py`
+- [x] 회차 간 비교 — `compare_runs.py`. 반복 편차를 재고, 편차보다 작은 차이는 "판단 보류"로 적는다
+- [x] **파라미터 A/B 1건 완료** — `mpc_weight_lat_error` 1→20: 추종 −41% / 조향 +170% (WORKLOG 4단계)
 
 **남은 정리**
 
@@ -38,29 +35,26 @@
 
 각 실험은 P1으로 지표를 남기면서 진행한다. "봤다"가 아니라 "측정했다"가 되도록.
 
-- [ ] **실험 1 · 장애물 정지** — `2D Dummy Car`를 전방 30~50m에 소환.
-      virtual wall이 서는지, 어느 모듈이 세웠는지 확인
-- [ ] **실험 2 · 신호등 정지** — 신호 교차로를 통과하는 경로.
-      `RecognitionResultOnImage`에 신호등 박스 → 빨간불 정지선 정지 → 초록불 출발 전환 관찰
-- [ ] **실험 3 · 앞차 추종** — AWSIM `☰` → Traffic Control · Play 켜고 NPC 교통 속 주행.
-      차간거리 유지, 앞차 감속 추종, `Perception`의 NPC 예측 경로 확인
-- [ ] **실험 4 · 교차로 판단** — `2D Checkpoint Pose`로 좌회전 포함 경로 구성.
-      `Debug` 켜서 `intersection` / `blind_spot` 모듈 판단 근거 확인
+- [x] **실험 1 · 장애물 정지** — 앞면 4.5 m 정지, 제거 후 재출발, PASS (WORKLOG 6)
+- [x] **실험 2 · 신호등 정지** — 외부 신호 강제로 재현 가능. 정지선 0.09 m, PASS (WORKLOG 7)
+- [~] **실험 3 · 앞차 추종** — 부분: 추종 관측됐으나 차간 지표에 NPC 교통이 섞임.
+      개별 객체 기록(`/perception/object_recognition/objects`)이 다음 확장 (WORKLOG 8)
+- [x] **실험 4 · 교차로 좌회전** — 완주 + intersection factor 확인.
+      부산물: 신호 arbiter 는 충돌 시 빨강 우선 (WORKLOG 9)
 
 관련 지도 정보 (조사 완료): 신호등 regulatory element **164개**, `turn_direction` 보유 lanelet **387개**
 (left 103 / straight 149 / right 135), 전체 lanelet 979개.
 
 ---
 
-## P2 — 시나리오 러너 + 회귀 테스트
+## P2 — 시나리오 러너 + 회귀 테스트 (핵심 완료)
 
-`scenario_simulator_v2`는 **설치돼 있지 않다** (adapter 패키지만 존재).
-표준 OpenSCENARIO를 도입하는 것보다, 직접 만드는 쪽이 코드량 대비 포폴 가치가 높다.
-
-- [ ] YAML 시나리오 정의 (초기 pose, goal, NPC 스폰 시각·위치·속도, 기대 조건)
-- [ ] 러너 — ADAPI로 초기화 → 목적지 설정 → engage → P1으로 지표 수집
-- [ ] N개 시나리오 배치 실행 + 리포트
-- [ ] 파라미터 변경 전후 비교 (회귀 감지)
+- [x] YAML 시나리오 (goal, objects, traffic_override, criteria 덮어쓰기) — `scenarios/` 5종
+- [x] 러너 — 리셋 → 위치추정 재초기화(오차 검증) → 경로 → engage → 도착 (`scenario_runner.py`)
+- [x] 배치 실행 (`run_batch.sh`, 러너 종료코드로 성공 판정) + A/B (`run_ab.sh`)
+- [x] 파라미터 전후 비교 1건 (mpc_weight_lat_error)
+- [ ] 앞차 특정 차간 추적 — 개별 객체 기록 추가
+- [ ] 우회전(대향차 횡단) 시나리오 — intersection 모듈의 gap acceptance 관찰
 
 ---
 
