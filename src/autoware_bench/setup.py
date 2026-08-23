@@ -9,6 +9,8 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
+        # 대시보드 HTML 은 파이썬 모듈 옆에 둔다 — 노드가 __file__ 기준으로 읽는다
+        ("lib/python3.10/site-packages/" + package_name, [package_name + "/dashboard.html"]),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -20,6 +22,7 @@ setup(
         "console_scripts": [
             "metrics_collector = autoware_bench.metrics_collector:main",
             "scenario_runner = autoware_bench.scenario_runner:main",
+            "dashboard = autoware_bench.dashboard:main",
         ],
     },
 )

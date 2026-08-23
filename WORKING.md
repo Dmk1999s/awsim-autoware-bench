@@ -4,6 +4,15 @@
 
 ---
 
+## 최근 추가 — 실시간 모니터 (HMI)
+
+- [x] `dashboard` 노드 + 웹 UI — 속도·모드·기록 상태·감속 사유·자체 모듈 상한·스택 Hz
+- [x] 카메라 패널 — 기본 꺼짐, 프리셋(320p/480p/720p)과 **실시간 대역폭 표시** (WORKLOG 14)
+- [x] 대역폭 실측 — 지표만 시간당 3.5 MB vs 데스크톱 WebRTC 0.9~4.5 GB
+- 주소: 컨테이너 `10100` → vast.ai 매핑 포트. 기동은 `bash scripts/start_dashboard.sh`
+
+---
+
 ## 지금 하는 것 — P1 주행 평가 하네스
 
 `planning_evaluator`가 지표를 흘려보내지만 아무도 모으지 않는다. 그 빈자리를 채운다.
@@ -68,10 +77,13 @@
 
 `autoware_behavior_velocity_template_module`이 공식 템플릿으로 들어있다. 복제해서 자체 모듈 작성.
 
-- [ ] 템플릿 구조 파악 (`src/`, `plugins.xml`, `config/`)
-- [ ] 모듈 주제 결정 — 스쿨존 감속 / 특정 lanelet 태그 서행 / 정지선 여유 확보 등
-- [ ] 구현 + `plugins.xml` 등록 + 파라미터
-- [ ] P1으로 before/after 정량 비교
+- [x] 템플릿 구조 파악 (`src/`, `plugins.xml`, `config/`)
+- [x] 모듈 주제 — **곡률 기반 선행 감속** (`curve_slowdown`)
+- [x] 구현 + `plugins.xml` 등록 + 파라미터 + 런치 등록 (`scripts/register_curve_module.sh`)
+- [x] P1으로 before/after — 횡가속 최대 −50%, 횡편차 p95 −41% (WORKLOG 13)
+- [x] 선행 거리 스윕 5/20/40 m — **효과 대부분이 5 m 에서 나온다**(가설 반증)
+- [ ] 다른 시나리오(06·07 우회전)에서도 같은 효과가 나오는지 — 지금은 05 좌회전만
+- [ ] `max_lateral_accel` 스윕 — 목표 0.8 을 걸었는데 실측 0.41 로 과하게 보수적이다
 
 ---
 

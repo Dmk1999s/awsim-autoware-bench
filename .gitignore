@@ -6,6 +6,7 @@ log/
 # 수집 결과 (용량이 크고 실행마다 달라짐)
 runs/*.csv
 collector.log
+autoware_launch.log   # restart_stack.sh 가 남기는 런치 로그
 
 # 리포트: 그림·CSV 는 빼고 요약(summary.md)만 추적한다.
 # WORKLOG 의 전후 비교가 이 파일들을 근거로 삼는다.
@@ -22,6 +23,8 @@ __pycache__/
 .venv-backups/
 migration_backup.tar.gz
 *.png
+# README 에 쓰는 그림은 예외 (직접 만든 것만 — 스크린샷은 개인정보 확인 후 넣는다)
+!docs/img/*.png
 
 # vast.ai 인스턴스 생성물
 onstart.sh

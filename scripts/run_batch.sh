@@ -10,6 +10,16 @@ OUT=/workspace/runs/batch_${TAG}.txt
 
 for i in $(seq 1 "$N"); do
   echo "=== [$i/$N] $(date -u +%H:%M:%S) ==="
+  # 회차마다 사전 점검. 상류 크래시(behavior_planning)나 노드 로드 실패가 나면
+  # 남은 회차가 전부 같은 이유로 실패한다 — 실측 2회, 각각 배치의 뒤쪽을 통째로 날렸다.
+  if ! bash /workspace/scripts/preflight.sh > /tmp/preflight.log 2>&1; then
+    echo "  ! 사전 점검 실패 — 스택을 재기동한다"
+    cat /tmp/preflight.log | sed 's/^/    /'
+    if ! bash /workspace/scripts/restart_stack.sh 2>&1 | sed 's/^/    /'; then
+      echo "  ✗ 재기동 후에도 점검 실패 — 배치를 중단한다"
+      break
+    fi
+  fi
   BEFORE=$(ls -1 /workspace/runs/run_*.csv 2>/dev/null | wc -l)
   # 러너가 실패해도 수집기는 CSV 를 남긴다 (경로 SET 은 됐으므로).
   # CSV 존재로 성공을 세면 차가 한 발짝도 안 간 주행이 배치에 섞인다 — 실제로 그렇게 셌었다.

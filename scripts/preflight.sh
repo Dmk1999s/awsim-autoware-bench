@@ -28,6 +28,15 @@ if [ -n "$dup" ]; then
   fail=1
 fi
 
+# 2b. behavior_planning — 새 경로를 받을 때 상류 버그로 컨테이너가 죽는다(WORKLOG 12 #1).
+#     죽어도 노드 수는 4개만 줄어 문턱을 넘으므로, 이름으로 직접 확인해야 잡힌다.
+for n in behavior_planning/behavior_path_planner behavior_planning/behavior_velocity_planner; do
+  if ! echo "$nodes" | grep -q "$n$"; then
+    echo "  ✗ $n 없음 — behavior_planning 컨테이너가 죽었다. 스택 재기동이 필요하다"
+    fail=1
+  fi
+done
+
 # 3. mrm_comfortable_stop_operator — 컴포저블 노드 로드가 재기동마다 간헐적으로 실패한다.
 #    빠지면 mrm_handler 침묵 → vehicle_cmd_gate 가 control_cmd 를 아예 안 낸다.
 if ! echo "$nodes" | grep -q "^/system/mrm_comfortable_stop_operator$"; then
@@ -51,6 +60,13 @@ if ! pgrep -f "topic pub .*max_velocity_default" > /dev/null; then
   echo "  ! 속도 상한 발행자 없음 — 띄운다"
   bash /workspace/scripts/start_velocity_limit.sh
   sleep 4
+fi
+
+# 4b. 수집기 — 이게 죽으면 주행은 되는데 CSV 가 안 남는다. 배치를 다 돌리고 나서야 안다
+if ! pgrep -f "autoware_bench/metrics_collector" > /dev/null; then
+  echo "  ! 수집기 없음 — 띄운다"
+  setsid nohup bash /workspace/scripts/start_collector.sh >> /workspace/collector.log 2>&1 < /dev/null &
+  sleep 6
 fi
 
 # 5. 위 조치가 먹었는지 최종 확인 — control_cmd 가 나오면 자율주행 전환이 가능하다

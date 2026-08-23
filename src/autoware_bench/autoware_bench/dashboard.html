@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>주행 모니터</title>
+<style>
+  :root {
+    --bg:#0e1116; --panel:#161b22; --line:#232a34; --text:#e6edf3; --dim:#8b949e;
+    --ok:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#58a6ff;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; }
+  header { display:flex; align-items:baseline; gap:12px; padding:14px 20px;
+           border-bottom:1px solid var(--line); }
+  header h1 { font-size:15px; margin:0; font-weight:600; letter-spacing:.02em; }
+  header .stamp { color:var(--dim); font-size:12px; margin-left:auto; }
+  .grid { display:grid; gap:14px; padding:16px 20px; max-width:1500px; margin:0 auto;
+          grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); }
+  .card.wide { grid-column:span 2; }
+  @media (max-width:760px) { .card.wide { grid-column:span 1; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+          padding:14px 16px; min-height:190px; }
+  .card h2 { font-size:11px; margin:0 0 10px; color:var(--dim); font-weight:600;
+             text-transform:uppercase; letter-spacing:.08em; }
+  .big { font-size:76px; font-weight:200; line-height:1; font-variant-numeric:tabular-nums; }
+  .unit { font-size:15px; color:var(--dim); margin-left:6px; }
+  .row { display:flex; justify-content:space-between; align-items:center;
+         padding:5px 0; font-size:13px; border-bottom:1px solid rgba(255,255,255,.04); }
+  .row:last-child { border-bottom:0; }
+  .row .k { color:var(--dim); }
+  .row .v { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+  .pill.ok { background:rgba(63,185,80,.15); color:var(--ok); }
+  .pill.warn { background:rgba(210,153,34,.15); color:var(--warn); }
+  .pill.bad { background:rgba(248,81,73,.15); color:var(--bad); }
+  .pill.idle { background:rgba(139,148,158,.15); color:var(--dim); }
+  .bar { height:7px; background:#0b0e13; border-radius:4px; overflow:hidden; margin-top:6px; }
+  .bar > div { height:100%; background:var(--accent); transition:width .2s; }
+  .factor { display:flex; justify-content:space-between; gap:10px; padding:6px 0; font-size:13px; }
+  .factor .m { font-weight:600; }
+  .muted { color:var(--dim); font-size:13px; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; }
+  canvas { width:100%; height:96px; display:block; margin-top:10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>주행 모니터</h1>
+  <span class="muted" id="conn">연결 중…</span>
+  <span class="stamp" id="stamp"></span>
+</header>
+
+<div class="grid">
+  <div class="card wide">
+    <h2>속도</h2>
+    <div><span class="big" id="kmh">0</span><span class="unit">km/h</span></div>
+    <div class="muted" id="mps">0.00 m/s</div>
+    <canvas id="spark" width="600" height="120"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>상태</h2>
+    <div class="row"><span class="k">운행 모드</span><span id="mode" class="pill idle">-</span></div>
+    <div class="row"><span class="k">경로</span><span id="route" class="pill idle">-</span></div>
+    <div class="row"><span class="k">자율주행 가능</span><span id="avail" class="pill idle">-</span></div>
+    <div class="row"><span class="k">기록</span><span id="rec" class="pill idle">-</span></div>
+    <div class="row"><span class="k">현재 CSV</span><span class="v muted" id="csv">-</span></div>
+  </div>
+
+  <div class="card wide">
+    <h2>카메라
+      <span id="camhz" class="muted" style="font-weight:400"></span>
+      <select id="cammode" style="float:right; background:#0b0e13; color:var(--text);
+              border:1px solid var(--line); border-radius:6px; padding:2px 6px; font-size:11px;">
+        <option value="off">끔 (대역폭 0)</option>
+        <option value="320,14,1000">절약 320p · 1 Hz</option>
+        <option value="480,10,500">보통 480p · 2 Hz</option>
+        <option value="720,6,300">선명 720p · 3 Hz</option>
+      </select>
+    </h2>
+    <img id="cam" alt="" style="width:100%; border-radius:6px; display:none;
+         background:#0b0e13; object-fit:cover;">
+    <div id="camoff" class="muted">꺼짐 — 켜면 아래에 실제 사용량이 표시된다</div>
+    <div class="muted" id="camrate" style="margin-top:8px; font-size:12px;"></div>
+  </div>
+
+  <div class="card wide">
+    <h2>감속·정지 사유</h2>
+    <div id="factors"><div class="muted">없음 — 자유 주행</div></div>
+  </div>
+
+  <div class="card">
+    <h2>자체 모듈 (곡률 선행 감속)</h2>
+    <div id="curve"><div class="muted">비활성</div></div>
+  </div>
+
+  <div class="card">
+    <h2>추종</h2>
+    <div class="row"><span class="k">횡편차</span><span class="v" id="lat">-</span></div>
+    <div class="bar"><div id="latbar" style="width:0%"></div></div>
+    <div class="row"><span class="k">조향각</span><span class="v" id="steer">-</span></div>
+    <div class="row"><span class="k">위치</span><span class="v muted" id="pos">-</span></div>
+  </div>
+
+  <div class="card">
+    <h2>인지 · 스택</h2>
+    <div class="row"><span class="k">인지 객체</span><span class="v" id="objs">-</span></div>
+    <div class="row"><span class="k">최근접</span><span class="v" id="closest">-</span></div>
+    <div class="row"><span class="k">trajectory</span><span class="v" id="traj">-</span></div>
+    <div class="row"><span class="k">odometry</span><span class="v" id="odom">-</span></div>
+  </div>
+</div>
+
+<script>
+const hist = [];
+const $ = id => document.getElementById(id);
+
+function pill(el, text, cls) { el.textContent = text; el.className = "pill " + cls; }
+
+function spark() {
+  const c = $("spark"), ctx = c.getContext("2d");
+  const w = c.width, h = c.height;
+  ctx.clearRect(0, 0, w, h);
+  if (hist.length < 2) return;
+  const max = Math.max(4.5, ...hist);
+  ctx.strokeStyle = "#58a6ff"; ctx.lineWidth = 2; ctx.beginPath();
+  hist.forEach((v, i) => {
+    const x = i / (hist.length - 1) * w, y = h - (v / max) * (h - 10) - 5;
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  });
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(255,255,255,.07)";
+  ctx.beginPath(); ctx.moveTo(0, h - 5); ctx.lineTo(w, h - 5); ctx.stroke();
+}
+
+async function tick() {
+  let d;
+  try {
+    d = await (await fetch("/data", {cache: "no-store"})).json();
+    $("conn").textContent = "";
+  } catch (e) {
+    $("conn").textContent = "연결 끊김 — 노드가 살아 있는지 확인";
+    return;
+  }
+  $("stamp").textContent = new Date().toLocaleTimeString("ko-KR");
+
+  const mps = d.speed || 0;
+  $("kmh").textContent = (mps * 3.6).toFixed(1);
+  $("mps").textContent = mps.toFixed(2) + " m/s";
+  hist.push(Math.abs(mps)); if (hist.length > 240) hist.shift();
+  spark();
+
+  pill($("mode"), d.mode, d.mode === "AUTONOMOUS" ? "ok" : d.mode === "STOP" ? "idle" : "warn");
+  pill($("route"), d.route, d.route === "SET" ? "ok" : d.route === "ARRIVED" ? "idle" : "idle");
+  pill($("avail"), d.auto_available ? "예" : "아니오", d.auto_available ? "ok" : "warn");
+
+  const rec = d.run && d.run.recording;
+  pill($("rec"), rec ? "기록 중" : "대기", rec ? "ok" : "idle");
+  $("csv").textContent = d.run ? d.run.name + " (" + d.run.mb + " MB)" : "-";
+
+  const fx = $("factors");
+  if (!d.factors || !d.factors.length) {
+    fx.innerHTML = '<div class="muted">없음 — 자유 주행</div>';
+  } else {
+    fx.innerHTML = d.factors.map(f => {
+      const color = f.status === "정지" ? "var(--bad)" : "var(--warn)";
+      return '<div class="factor"><span class="m"><span class="dot" style="background:' + color +
+             '"></span>' + f.module + '</span><span>' + f.status + ' · ' + f.distance + ' m</span></div>';
+    }).join("");
+  }
+
+  $("curve").innerHTML = d.curve
+    ? '<div class="factor"><span class="m"><span class="dot" style="background:var(--accent)"></span>속도 상한</span>' +
+      '<span>' + d.curve.velocity.toFixed(2) + ' m/s · ' + d.curve.distance + ' m 앞</span></div>'
+    : '<div class="muted">비활성 — 곡선 없음 또는 enable=false</div>';
+
+  if (d.lat_dev !== null && d.lat_dev !== undefined) {
+    const cm = Math.abs(d.lat_dev) * 100;
+    $("lat").textContent = cm.toFixed(1) + " cm";
+    $("latbar").style.width = Math.min(100, cm / 30 * 100) + "%";
+    $("latbar").style.background = cm > 30 ? "var(--bad)" : cm > 12 ? "var(--warn)" : "var(--ok)";
+  }
+  if (d.steer !== null && d.steer !== undefined) {
+    $("steer").textContent = (d.steer * 180 / Math.PI).toFixed(1) + "°";
+  }
+  $("pos").textContent = d.x.toFixed(1) + ", " + d.y.toFixed(1);
+  $("objs").textContent = d.objects;
+  $("closest").textContent = d.closest !== null && d.closest !== undefined ? d.closest + " m" : "-";
+
+  const r = d.rates || {};
+  $("camhz").textContent = r.camera ? "· " + r.camera.toFixed(1) + " Hz" : "· 신호 없음";
+  const rate = (v, min) => (v || 0).toFixed(1) + " Hz";
+  $("traj").innerHTML = '<span class="dot" style="background:' +
+    ((r.trajectory || 0) > 3 ? "var(--ok)" : "var(--bad)") + '"></span>' + rate(r.trajectory);
+  $("odom").innerHTML = '<span class="dot" style="background:' +
+    ((r.odometry || 0) > 3 ? "var(--ok)" : "var(--bad)") + '"></span>' + rate(r.odometry);
+}
+tick(); setInterval(tick, 400);
+
+// 카메라는 기본 꺼짐이다. 이 인스턴스는 egress 가 과금되므로(PROGRESS.md 대역폭 사고)
+// 켤지 말지와 얼마나 쓸지를 보는 사람이 정하게 한다. 지표만 보면 시간당 3.5 MB 정도다.
+//
+// 한 장을 다 받은 뒤 다음 장을 요청한다. 고정 주기로 걸면 인코딩이 밀릴 때 요청만 쌓인다.
+const cam = $("cam"), camOff = $("camoff"), camSel = $("cammode");
+let camCfg = null, camUrl = null, camBytes = [], camBusy = false;
+
+// ?cam=480,10,500 처럼 주소로도 지정할 수 있다 — 링크 하나로 원하는 설정을 공유하려고
+const camParam = new URLSearchParams(location.search).get("cam");
+camSel.value = camParam || localStorage.getItem("camMode") || "off";
+camSel.addEventListener("change", () => {
+  localStorage.setItem("camMode", camSel.value);
+  applyCam();
+});
+
+function applyCam() {
+  const v = camSel.value;
+  if (v === "off") {
+    camCfg = null;
+    cam.style.display = "none";
+    camOff.style.display = "";
+    $("camrate").textContent = "";
+    if (camUrl) { URL.revokeObjectURL(camUrl); camUrl = null; }
+    return;
+  }
+  const [w, q, ms] = v.split(",").map(Number);
+  camCfg = {w, q, ms};
+  camOff.style.display = "none";
+  cam.style.display = "";
+  if (!camBusy) loopFrame();
+}
+
+async function loopFrame() {
+  if (!camCfg) { camBusy = false; return; }
+  camBusy = true;
+  const cfg = camCfg;
+  try {
+    const r = await fetch(`/camera.jpg?w=${cfg.w}&q=${cfg.q}&t=${Date.now()}`, {cache: "no-store"});
+    if (r.ok) {
+      const b = await r.blob();
+      camBytes.push([Date.now(), b.size]);
+      const prev = camUrl;
+      camUrl = URL.createObjectURL(b);
+      cam.src = camUrl;
+      if (prev) URL.revokeObjectURL(prev);
+    }
+  } catch (e) { /* 노드가 잠깐 없어도 계속 시도한다 */ }
+  showRate();
+  setTimeout(loopFrame, cfg.ms);
+}
+
+function showRate() {
+  const now = Date.now();
+  camBytes = camBytes.filter(([t]) => now - t < 10000);
+  if (camBytes.length < 2) return;
+  const total = camBytes.reduce((a, [, b]) => a + b, 0);
+  const kbs = total / 10 / 1024;
+  $("camrate").textContent =
+    `사용 중 ${kbs.toFixed(0)} KB/s ≈ 시간당 ${(kbs * 3600 / 1024).toFixed(0)} MB` +
+    `  (지표만 보면 시간당 약 3.5 MB)`;
+}
+applyCam();
+</script>
+</body>
+</html>

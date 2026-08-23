@@ -7,6 +7,13 @@ AWSIM Labs 1.6.1 + Autoware 1.9.0 (ROS 2 Humble) 가상 도심 자율주행 —
 > 그 도구로 **MPC 횡오차 가중치의 교환비(추종 −41% ↔ 조향 +170%)** 와
 > **신호 arbiter의 빨강 우선 병합 규칙**을 측정으로 확인했다.
 
+그리고 그 하네스로 **직접 만든 계획 모듈**의 효과를 잰다 — 곡률 선행 감속 모듈은
+회전 중 최대 횡가속도를 **0.81 → 0.41 m/s² (−50%)** 로 낮췄다.
+
+| 시뮬레이터 (AWSIM Labs) | 실시간 모니터 (직접 제작) |
+|---|---|
+| ![AWSIM](docs/img/awsim.png) | ![대시보드](docs/img/dashboard.png) |
+
 실행 환경: vast.ai GPU 컨테이너(RTX 3090), 도쿄 니시신주쿠 공식 샘플 맵.
 좌측통행은 스택 설정이 아니라 **지도의 `turn_direction` 속성**이다 — Autoware에는
 `left_hand` 같은 파라미터가 존재하지 않으며, 우측통행 지도를 넣으면 코드 수정 없이 우측통행으로 동작한다.
@@ -29,6 +36,15 @@ Autoware의 `planning_evaluator` / `control_evaluator`는 지표를 실시간으
 | `compare_runs.py` | 반복 편차 측정 + A/B 비교. **차이가 반복 편차보다 작으면 "판단 보류"** — 개선/악화를 주장하지 않는다 |
 | `check_criteria.py` + `criteria.yaml` | 합격 판정. 임계값은 기본 파라미터 10회 관측치에서 도출 — 근거 없는 숫자를 먼저 박지 않는다 |
 | `run_report.py` | 주행 1회를 6분할 그림 + 요약으로. 정지마다 **세운 모듈**과 거리를 표기 |
+| `plot_ab.py` | 배치 묶음들을 그림 한 장으로 — 속도 프로파일·횡가속도·회차별 최댓값 |
+| `dashboard` | 실시간 HMI. 속도·모드·기록 상태와 **지금 어느 모듈이 왜 세우는지**를 브라우저로 |
+| `preflight.sh` / `restart_stack.sh` | 무인 배치를 위한 사전 점검·자동 복구 (실패 4종은 러너에게 같은 한 줄로만 보인다) |
+
+그리고 Autoware 쪽에 **직접 만든 계획 모듈** 하나:
+
+| 구성 | 역할 |
+|---|---|
+| `autoware_behavior_velocity_curve_slowdown_module` | 경로 곡률에서 `v = √(a_lat/κ)` 상한을 만들어 **곡선 진입 전부터** 건다. `enable` 을 런타임 토글해 같은 스택에서 A/B 를 돌린다 |
 
 ## 무엇을 측정했나
 
@@ -42,6 +58,33 @@ Autoware의 `planning_evaluator` / `control_evaluator`는 지표를 실시간으
 
 추종 오차를 41% 줄이는 대가는 조향 활동 2.7배. 승차감(저크)에는 측정 가능한 영향 없음.
 대조군(기본값 재측정)의 모든 지표가 반복 편차 안 — 변화는 파라미터 때문이다.
+
+### 직접 만든 모듈의 효과 (5회씩 A/B, `docs/WORKLOG.md` §13)
+
+![곡률 감속 A/B](docs/img/curve_slowdown_ab.png)
+
+| 지표 | 모듈 끔 | 모듈 켬 | 변화 |
+|---|---:|---:|---|
+| 횡가속도 최대 | 0.81 | **0.41 m/s²** | −50% |
+| 횡가속도 p95 | 0.70 | **0.36** | −49% |
+| 횡편차 p95 | 24.13 | **14.32 cm** | −41% |
+| 주행 시간 | 52.0 | 60.6 s | +16% — **반복 편차(19.1 s) 안이라 판단 보류** |
+
+회차별 최댓값의 흩어짐도 함께 줄었다(폭 0.36 → 0.04). 같은 스택에서 파라미터만 토글했으므로
+재기동에 따른 조건 차이가 섞이지 않는다.
+
+**가설이 반만 맞았다.** 이 모듈의 존재 이유는 "기존 필터(velocity_smoother)는 곡선 3.5 m
+전부터 줄이지만 우리는 20 m 전부터 줄인다"였다. 선행 거리를 5/20/40 m 로 쓸어보니:
+
+![선행 거리 스윕](docs/img/curve_sweep.png)
+
+| 선행 거리 | 끔 | 5 m | 20 m | 40 m |
+|---|---:|---:|---:|---:|
+| 횡가속도 최대 [m/s²] | 0.81 | 0.52 | 0.41 | 0.43 |
+
+**효과의 대부분은 5 m 에서 이미 나온다.** 20 m 와 40 m 의 차이는 반복 편차 안이다.
+즉 이 시나리오·이 속도 상한(4.17 m/s)에서 중요한 것은 선행 거리가 아니라 곡률 기반 상한을
+거는 것 자체였다. 원래 주장을 그대로 싣지 않고 이렇게 적는 편이 정확하다.
 
 ### 신호 arbiter는 충돌 시 빨강을 택한다 (§7·§9)
 
@@ -64,6 +107,12 @@ V2X 스푸핑을 막는 방어적 설계가 측정으로 확인됐다.
 | 교차로 좌회전 | yaw +62° 완주, `intersection` factor 20.6 m 앞부터 평가 |
 | 우회전 (gap acceptance) | 양보 차선에서 대향차 평가 → 23 m 앞 `collision stop` 삽입 → **0.6 s 만에 해제**, 멈추지 않고 회전. 같은 교차로의 보호 우회전은 모듈이 아예 개입하지 않는다 — 양보 의무는 좌측통행이 아니라 **지도 `right_of_way` 규제요소의 역할**이 정한다 |
 
+### 주행 1회는 이렇게 남는다
+
+`run_report.py` 가 CSV 하나를 그림과 요약으로 바꾼다 (아래는 우회전 gap acceptance 주행).
+
+![주행 리포트](docs/img/run_report.png)
+
 ## 왜 이 수치를 믿을 수 있나
 
 1. **반복 편차를 먼저 쟀다.** 같은 조건 5회의 폭(횡편차 RMS 0.59 cm)이 판정 기준선이다.
@@ -73,6 +122,25 @@ V2X 스푸핑을 막는 방어적 설계가 측정으로 확인됐다.
    전부 그렇게 표기돼 있다 (`docs/WORKLOG.md`).
 4. **실패를 성공으로 세는 버그를 잡았다.** 차가 한 발짝도 안 간 주행이 배치에 섞여
    정반대 결론("가중치를 올리면 불안정")이 나올 뻔했다 — 러너 종료코드 판정으로 수정.
+
+## 실시간 모니터 — 그리고 보는 데 드는 비용
+
+주행을 지켜볼 방법이 데스크톱 스트리밍뿐이었는데, 화면 전체를 영상으로 내보내는 방식이라
+egress 가 비싸다 (이 인스턴스에서 대역폭으로 이미 한 번 사고를 냈다). 필요한 값만 보내는
+HMI 를 따로 만들었다 — `ros2 run autoware_bench dashboard`.
+
+실측 대역폭:
+
+| 보기 | 시간당 |
+|---|---:|
+| 지표만 (카메라 끔) | **3.5 MB** |
+| 카메라 320p · 1 Hz | 22 MB |
+| 카메라 480p · 2 Hz | 97 MB |
+| 카메라 720p · 3 Hz | 510 MB |
+| (참고) 데스크톱 WebRTC 1080p | 0.9~4.5 GB |
+
+카메라는 **기본 꺼짐**이고, 켜면 화면에 실제 사용량(KB/s, 시간당 MB)이 함께 뜬다.
+브라우저를 닫으면 요청이 끊겨 트래픽도 0 이 된다.
 
 ## 트러블슈팅 기록
 
@@ -111,6 +179,20 @@ python3 src/autoware_bench/scripts/check_criteria.py runs/batch_baseline.txt
 # 파라미터 A/B
 bash scripts/run_ab.sh scenarios/01_straight.yaml 5 test mpc_weight_lat_error 5.0
 python3 src/autoware_bench/scripts/compare_runs.py runs/batch_baseline.txt runs/batch_test.txt
+
+# 자체 모듈 등록 (Autoware 런치 XML 패치 — 멱등)
+colcon build --packages-select autoware_behavior_velocity_curve_slowdown_module
+bash scripts/register_curve_module.sh     # 이후 Autoware 재기동
+
+# 자체 모듈 A/B (같은 스택에서 파라미터만 토글)
+PLANNER=/planning/scenario_planning/lane_driving/behavior_planning/behavior_velocity_planner
+bash scripts/run_ab.sh scenarios/05_left_turn.yaml 5 off curve_slowdown.enable false $PLANNER
+bash scripts/run_ab.sh scenarios/05_left_turn.yaml 5 on  curve_slowdown.enable true  $PLANNER
+python3 src/autoware_bench/scripts/plot_ab.py runs/batch_off.txt runs/batch_on.txt \
+        --labels "끔" "켬" --out docs/img/ab.png
+
+# 실시간 모니터 (컨테이너 10100)
+bash scripts/start_dashboard.sh
 ```
 
 전체 설치 절차와 검증 명령은 [RESTART.md](RESTART.md), 작업별 전후 비교는 [docs/WORKLOG.md](docs/WORKLOG.md).
