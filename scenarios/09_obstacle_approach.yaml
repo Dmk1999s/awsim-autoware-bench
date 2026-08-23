@@ -6,7 +6,7 @@ goal:
   y: 49980.1
   z: 41.5
   yaw: 0.6
-timeout_s: 200
+timeout_s: 90
 objects:
 - x: 81422.11
   y: 49946.84

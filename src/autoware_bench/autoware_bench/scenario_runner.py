@@ -34,6 +34,7 @@ from autoware_perception_msgs.msg import (
     TrafficLightGroupArray, TrafficLightGroup, TrafficLightElement, PredictedObjects,
 )
 from autoware_planning_msgs.msg import LaneletRoute
+from autoware_vehicle_msgs.msg import VelocityReport
 from autoware_adapi_v1_msgs.msg import OperationModeState, RouteState
 from autoware_adapi_v1_msgs.srv import (
     ClearRoute, ChangeOperationMode, InitializeLocalization, SetRoutePoints,
@@ -106,6 +107,7 @@ class ScenarioRunner(Node):
         self.est = None    # NDT 추정 위치
         self.truth = None  # AWSIM 정답 위치
         self.truth_vel = 0.0
+        self.wheel_vel = 0.0   # 차량 인터페이스가 보고하는 속도 — 위치추정 API 가 보는 값
         self.spawned = []      # (uuid, 스펙) — 수명이 다하기 전에 다시 심으려고 들고 있는다
         self.spawn_time = 0.0
         self.route = None
@@ -124,6 +126,10 @@ class ScenarioRunner(Node):
                                  self.on_route, latched)
         self.create_subscription(Odometry, "/localization/kinematic_state",
                                  self.on_kinematic, 10)
+        # 위치추정 초기화는 "The vehicle is not stopped" 로 거부되는데, 그 판단은 여기서 온다.
+        # 시뮬레이터 정답 속도가 0 이어도 이 값이 남아 있으면 거부된다 (실측 5회 중 4회 실패).
+        self.create_subscription(VelocityReport, "/vehicle/status/velocity_status",
+                                 lambda m: setattr(self, "wheel_vel", m.longitudinal_velocity), 10)
         # AWSIM 의 정답 위치는 BEST_EFFORT 로 발행된다. 기본값(RELIABLE)으로 구독하면
         # QoS 불일치로 메시지가 한 개도 오지 않는다 — 경고만 뜨고 조용히 비어 있다.
         sensor = QoSProfile(
@@ -275,10 +281,17 @@ class ScenarioRunner(Node):
         리셋 직후에는 차가 아직 구르고 있어 초기화가 "The vehicle is not stopped" 로
         거부된다 (실측 3회 중 2회). 멈출 때까지 기다린다.
         """
-        if not self.wait_until(lambda: abs(self.truth_vel) < 0.05, 20.0, "리셋 후 정차"):
+        if not self.wait_until(
+                lambda: abs(self.truth_vel) < 0.05 and abs(self.wheel_vel) < 0.05,
+                20.0, "리셋 후 정차"):
             self.get_logger().warn("정차 확인 실패 — 그대로 초기화를 시도한다")
-        status = self.call("init", InitializeLocalization.Request(pose=[]))
-        if not status.success:
+        for attempt in (1, 2, 3):
+            status = self.call("init", InitializeLocalization.Request(pose=[]))
+            if status.success:
+                break
+            self.get_logger().warn(f"위치추정 초기화 거부 ({attempt}/3): {status.message}")
+            self.spin(3.0)
+        else:
             raise RuntimeError(f"위치추정 초기화 실패: {status.message}")
         ok = self.wait_until(
             lambda: (e := self.localization_error()) is not None and e < LOCALIZATION_TOLERANCE_M,
@@ -438,8 +451,12 @@ class ScenarioRunner(Node):
         심으면 위치가 되돌아가 추종 실험이 깨진다).
         """
         statics = [(u, o) for u, o in self.spawned if not o.get("velocity")]
-        if not statics or time.time() - self.spawn_time < 25.0:
+        if not statics or time.time() - self.spawn_time < 20.0:
             return
+        # **먼저 새로 심고, 그다음 옛것을 지운다.** 반대로 하면 그 사이에 객체가 없는 순간이
+        # 생기고, 그때 계획이 정지를 풀어 차가 그대로 지나간다 (실측 5회 중 3회 관통).
+        self.spawn_objects([o for _, o in statics], quiet=True)
+        self.spin(0.5)
         for uid, _ in statics:
             msg = DummyObject()
             msg.header.frame_id = "map"
@@ -447,8 +464,8 @@ class ScenarioRunner(Node):
             msg.id.uuid = uid
             msg.action = DummyObject.DELETE
             self.obj_pub.publish(msg)
-        self.spawned = [(u, o) for u, o in self.spawned if o.get("velocity")]
-        self.spawn_objects([o for _, o in statics], quiet=True)
+        self.spawned = [(u, o) for u, o in self.spawned
+                        if o.get("velocity") or (u, o) not in statics]
         self.get_logger().info(f"객체 다시 심음 ({len(statics)}개) — 수명 30 초 대응")
 
     def publish_signal(self, group_ids, color):
