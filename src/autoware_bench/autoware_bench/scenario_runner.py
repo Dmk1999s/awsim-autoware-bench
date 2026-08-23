@@ -105,6 +105,7 @@ class ScenarioRunner(Node):
         self.auto_seq = 0   # 새 메시지인지 가리기 위한 카운터
         self.est = None    # NDT 추정 위치
         self.truth = None  # AWSIM 정답 위치
+        self.truth_vel = 0.0
         self.spawned = []      # (uuid, 스펙) — 수명이 다하기 전에 다시 심으려고 들고 있는다
         self.spawn_time = 0.0
         self.route = None
@@ -131,7 +132,7 @@ class ScenarioRunner(Node):
             durability=QoSDurabilityPolicy.VOLATILE,
         )
         self.create_subscription(Odometry, "/awsim/ground_truth/localization/kinematic_state",
-                                 lambda m: setattr(self, "truth", m.pose.pose.position), sensor)
+                                 self.on_truth, sensor)
         # 스폰한 객체가 실제로 씬에 생겼는지 확인하려고 인지 결과를 본다 (아래 verify_spawn)
         self.objects = []
         self.create_subscription(
@@ -164,6 +165,11 @@ class ScenarioRunner(Node):
     def on_kinematic(self, msg):
         self.est = msg.pose.pose.position
         self.est_vel = msg.twist.twist.linear.x
+
+    def on_truth(self, msg):
+        self.truth = msg.pose.pose.position
+        # 리셋 직후 Autoware 의 속도 추정은 텔레포트를 몰라 못 믿는다 — 시뮬레이터 실측을 쓴다
+        self.truth_vel = msg.twist.twist.linear.x
 
     def on_route(self, msg):
         self.route = msg
@@ -269,7 +275,7 @@ class ScenarioRunner(Node):
         리셋 직후에는 차가 아직 구르고 있어 초기화가 "The vehicle is not stopped" 로
         거부된다 (실측 3회 중 2회). 멈출 때까지 기다린다.
         """
-        if not self.wait_until(lambda: abs(self.est_vel) < 0.05, 15.0, "리셋 후 정차"):
+        if not self.wait_until(lambda: abs(self.truth_vel) < 0.05, 20.0, "리셋 후 정차"):
             self.get_logger().warn("정차 확인 실패 — 그대로 초기화를 시도한다")
         status = self.call("init", InitializeLocalization.Request(pose=[]))
         if not status.success:
@@ -370,8 +376,11 @@ class ScenarioRunner(Node):
             msg = DummyObject()
             msg.header.frame_id = "map"
             msg.header.stamp = self.get_clock().now().to_msg()
-            msg.id.uuid = list(uuid_lib.uuid4().bytes)
-            self.spawned.append((list(msg.id.uuid), o))
+            # 메시지에 넣은 뒤 다시 읽으면 numpy 타입이 되어 재사용할 때 검증에 걸린다.
+            # 원본 리스트를 그대로 보관한다.
+            uid = [int(b) for b in uuid_lib.uuid4().bytes]
+            msg.id.uuid = uid
+            self.spawned.append((uid, o))
             msg.action = DummyObject.ADD
             p = msg.initial_state.pose_covariance.pose
             p.position.x, p.position.y = float(o["x"]), float(o["y"])
@@ -440,6 +449,7 @@ class ScenarioRunner(Node):
             self.obj_pub.publish(msg)
         self.spawned = [(u, o) for u, o in self.spawned if o.get("velocity")]
         self.spawn_objects([o for _, o in statics], quiet=True)
+        self.get_logger().info(f"객체 다시 심음 ({len(statics)}개) — 수명 30 초 대응")
 
     def publish_signal(self, group_ids, color):
         msg = TrafficLightGroupArray()
