@@ -18,7 +18,7 @@ from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 
 from nav_msgs.msg import Odometry
 from tier4_metric_msgs.msg import MetricArray
-from autoware_adapi_v1_msgs.msg import RouteState, VelocityFactorArray
+from autoware_adapi_v1_msgs.msg import OperationModeState, RouteState, VelocityFactorArray
 
 
 def yaw_from_quaternion(q):
@@ -64,6 +64,14 @@ class MetricsCollector(Node):
         )
         self.create_subscription(
             RouteState, "/api/routing/state", self.on_route_state, latched)
+
+        # 운행 모드. 기록 구간에는 engage 전 대기가 섞여 있는데, 그 구간의 자세 오차는
+        # 스폰 위치 때문이지 추종 품질이 아니다. 실제로 반복 5회 모두 |횡편차| p95 가
+        # 28.5~29.0 cm 로 같았고, 그 값은 전부 출발 직후 오프셋이었다.
+        # 모드를 같이 남겨 분석에서 자율주행 구간만 잘라 쓸 수 있게 한다.
+        self.create_subscription(
+            OperationModeState, "/api/operation_mode/state",
+            self.on_operation_mode, latched)
 
         self.get_logger().info(f"대기 중 — 경로가 설정되면 기록을 시작한다. 출력: {self.output_dir}")
 
@@ -122,6 +130,10 @@ class MetricsCollector(Node):
             name = f.behavior or "unknown"
             self.write(msg.header.stamp, "factor", f"{name}/status", f.status)
             self.write(msg.header.stamp, "factor", f"{name}/distance", f"{f.distance:.3f}")
+
+    def on_operation_mode(self, msg):
+        # 1=STOP 2=AUTONOMOUS 3=LOCAL 4=REMOTE
+        self.write(msg.stamp, "system", "operation_mode", msg.mode)
 
     def on_odom(self, msg):
         p = msg.pose.pose.position

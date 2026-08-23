@@ -32,8 +32,10 @@ from autoware_adapi_v1_msgs.srv import (
     ClearRoute, ChangeOperationMode, InitializeLocalization, SetRoutePoints,
 )
 
-# AWSIM 메뉴의 Ego Vehicle 리셋 버튼. 창 크기가 고정이라 좌표도 고정이다.
-AWSIM_RESET_XY = (566, 504)
+# AWSIM 메뉴(☰)의 버튼 좌표. 창 크기가 고정이라 좌표도 고정이다.
+# ROS 인터페이스가 없어 GUI 를 누르는 수밖에 없다.
+AWSIM_EGO_RESET_XY = (566, 504)      # Ego Vehicle 리셋 — 스폰 좌표로 복귀
+AWSIM_TRAFFIC_RESET_XY = (643, 611)  # Traffic 리셋 — 시드대로 NPC 재배치
 AWSIM_DISPLAY = ":20"
 
 LOCALIZATION_TOLERANCE_M = 0.5   # 정답 대비 이보다 어긋나면 출발시키지 않는다
@@ -118,12 +120,21 @@ class ScenarioRunner(Node):
 
     # ---- 절차 ----
 
-    def reset_ego(self):
-        """AWSIM 을 스폰 지점으로 되돌린다. ROS 인터페이스가 없어 GUI 를 누른다."""
-        x, y = AWSIM_RESET_XY
-        subprocess.run(["xdotool", "mousemove", str(x), str(y), "click", "1"],
+    def _click(self, xy):
+        subprocess.run(["xdotool", "mousemove", str(xy[0]), str(xy[1]), "click", "1"],
                        env={"DISPLAY": AWSIM_DISPLAY, "PATH": "/usr/bin:/bin"}, check=True)
-        self.get_logger().info("AWSIM ego 리셋")
+
+    def reset_ego(self):
+        """차와 NPC 교통을 둘 다 출발 상태로 되돌린다.
+
+        교통까지 리셋하는 이유: 시드를 고정해도 앞 주행이 흘려놓은 NPC 배치가 남아 있으면
+        회차마다 조건이 다르다. 실제로 교통을 두고 5회 돌렸을 때 주행 시간이
+        40.3~65.1 s (폭 24.8 s) 로 흔들렸고, 그 폭이 파라미터 효과를 덮을 만큼 컸다.
+        """
+        self._click(AWSIM_TRAFFIC_RESET_XY)
+        self.spin(1.0)
+        self._click(AWSIM_EGO_RESET_XY)
+        self.get_logger().info("AWSIM 리셋 (교통 + ego)")
         self.spin(5.0)
 
     def reinit_localization(self):
