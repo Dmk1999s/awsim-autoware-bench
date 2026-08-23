@@ -1,0 +1,18 @@
+name: 08_signal_spoof
+description: >
+  외부 신호로 「강제 통과」가 가능한지 본다. WORKLOG 9 에는 「arbiter 가 충돌 시 빨강을
+  택하므로 강제 통과는 만들 수 없다」고 적었는데, arbiter 소스를 읽어보니 실제 규칙은
+  「모양별로 신뢰도가 가장 높은 값, 동점이면 먼저 온 것」이다. 실측에서도 동점 충돌의
+  판정이 양방향으로 갈렸다 (WORKLOG 23).
+  그래서 자차 차선을 지배하는 그룹(1516, lanelet 383)에만 초록을 상시 주입하고,
+  자연 신호가 빨강인 동안 차가 정지선을 넘는지 관찰한다.
+goal: {x: 81567.6, y: 50015.8, z: 41.5, yaw: 0.35}
+timeout_s: 300
+traffic_override:
+  group_ids: [1516]
+  color: GREEN          # hold_stop_s 없음 = 도착까지 상시 강제
+criteria:
+  max:
+    lat_p95: 20.0
+    lat_rms: 8.0
+    jerk_p95: 3.5
