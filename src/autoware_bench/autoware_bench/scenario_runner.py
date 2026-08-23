@@ -29,6 +29,9 @@ from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 from geometry_msgs.msg import Pose
 from nav_msgs.msg import Odometry
 from tier4_simulation_msgs.msg import DummyObject
+from autoware_perception_msgs.msg import (
+    TrafficLightGroupArray, TrafficLightGroup, TrafficLightElement,
+)
 from autoware_adapi_v1_msgs.msg import OperationModeState, RouteState
 from autoware_adapi_v1_msgs.srv import (
     ClearRoute, ChangeOperationMode, InitializeLocalization, SetRoutePoints,
@@ -88,6 +91,13 @@ class ScenarioRunner(Node):
         # LiDAR → 인지 → 계획 전체 파이프라인이 그것을 감지한다 — 인지를 우회하지 않는다.
         self.obj_pub = self.create_publisher(
             DummyObject, "/simulation/dummy_perception_publisher/object_info", 10)
+
+        # 외부 신호 오버라이드. traffic_light_arbiter 가 카메라 인지와 병합한다.
+        # 시뮬레이터의 실제 신호와 무관하게 특정 신호를 강제해, 신호 정지 실험을
+        # "도착 시점의 신호 운"에서 떼어내 재현 가능하게 만든다.
+        self.tl_pub = self.create_publisher(
+            TrafficLightGroupArray,
+            "/perception/traffic_light_recognition/external/traffic_signals", 10)
 
         self.cli = {
             "init": self.create_client(InitializeLocalization, "/api/localization/initialize"),
@@ -254,9 +264,58 @@ class ScenarioRunner(Node):
         if self.spec.get("objects"):
             self.spin(2.0)
 
+    def publish_signal(self, group_ids, color):
+        msg = TrafficLightGroupArray()
+        msg.stamp = self.get_clock().now().to_msg()
+        for gid in group_ids:
+            g = TrafficLightGroup()
+            g.traffic_light_group_id = int(gid)
+            e = TrafficLightElement()
+            e.color = color
+            e.shape = TrafficLightElement.CIRCLE
+            e.status = TrafficLightElement.SOLID_ON
+            e.confidence = 1.0
+            g.elements.append(e)
+            msg.traffic_light_groups.append(g)
+        self.tl_pub.publish(msg)
+
     def drive(self):
         timeout = self.spec.get("timeout_s", 300)
         t0 = time.time()
+
+        # 신호 강제 실험: 빨강을 계속 발행 → 정지 확인 → 초록으로 전환 → 통과 관찰.
+        tl = self.spec.get("traffic_override")
+        if tl:
+            gids = tl["group_ids"]
+            hold = tl.get("hold_stop_s", 8)
+            stop_started = None
+            last_pub = 0.0
+            phase = "red"
+            self.get_logger().info(f"신호 강제: 그룹 {gids} 빨강")
+            while time.time() - t0 < timeout:
+                rclpy.spin_once(self, timeout_sec=0.1)
+                now = time.time()
+                if now - last_pub > 0.4:   # arbiter 는 갱신이 끊긴 외부 신호를 무시한다
+                    self.publish_signal(
+                        gids,
+                        TrafficLightElement.RED if phase == "red" else TrafficLightElement.GREEN)
+                    last_pub = now
+                if phase == "red" and now - t0 > 5.0:
+                    moving = abs(self.est_vel) > 0.1
+                    if moving:
+                        stop_started = None
+                    elif stop_started is None:
+                        stop_started = now
+                    elif now - stop_started >= hold:
+                        self.get_logger().info(f"빨간불 정지 {hold}s 확인 — 초록으로 전환")
+                        phase = "green"
+                if self.route_state == RouteState.ARRIVED:
+                    if phase == "red":
+                        self.get_logger().error("빨간불인데 도착 — 신호를 무시하고 통과했다")
+                        return False, time.time() - t0
+                    return True, time.time() - t0
+            self.get_logger().error(f"시간 초과 ({timeout}s, phase={phase})")
+            return False, time.time() - t0
 
         # 장애물 시나리오: 차선을 막은 객체 앞에서는 영원히 도착하지 못한다.
         # "hold_stop_s 초 연속 정지"를 확인하면 장애물을 치우고 재출발까지 본다 —

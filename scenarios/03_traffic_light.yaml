@@ -1,0 +1,15 @@
+name: 03_traffic_light
+description: >
+  스폰 → 신호 교차로(regulatory element 1514·1515·1516, x≈81514) 통과 → 81567 도착.
+  외부 신호 채널로 교차로 신호를 빨강으로 강제해 정지선 정지를 확인한 뒤,
+  초록으로 바꿔 통과를 본다. 시뮬레이터의 실제 신호 주기와 무관하게 재현된다.
+  그룹 ID 는 지도(lanelet2 osm)에서 어제 신호 정지 지점(81514.7, 50002.9)과
+  가장 가까운 정지선을 가진 traffic_light regulatory element 로 찾았다.
+goal: {x: 81567.6, y: 50015.8, z: 41.5, yaw: 0.35}
+timeout_s: 400
+traffic_override:
+  group_ids: [1514, 1515, 1516]   # 같은 정지선의 차선별 신호 — 전부 빨강이면 자차 차선 포함
+  hold_stop_s: 8
+criteria:
+  min:
+    mid_stops: 1

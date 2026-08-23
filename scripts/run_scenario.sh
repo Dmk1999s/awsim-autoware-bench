@@ -8,4 +8,7 @@ source /root/autoware/install/setup.bash
 source /workspace/install/setup.bash
 export CYCLONEDDS_URI=file:///root/cyclonedds.xml
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-exec ros2 run autoware_bench scenario_runner --ros-args -p scenario:="$1"
+# use_sim_time 필수 — 스택 전체가 sim time 으로 돈다. 벽시계로 스탬프를 찍으면
+# traffic_light_arbiter 가 external_time_tolerance 초과로 외부 신호를 조용히 버린다
+# (실측: 빨강을 발행해도 judged 출력이 빈 채로 유지, 차가 그대로 통과).
+exec ros2 run autoware_bench scenario_runner --ros-args -p scenario:="$1" -p use_sim_time:=true
