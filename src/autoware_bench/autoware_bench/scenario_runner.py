@@ -233,9 +233,11 @@ class ScenarioRunner(Node):
         self.obj_pub.publish(msg)
         self.spin(1.0)
 
-    def spawn_objects(self):
-        """시나리오의 objects: 목록을 씬에 스폰한다."""
-        for o in self.spec.get("objects", []):
+    def spawn_objects(self, objs=None):
+        """시나리오의 objects: 목록(또는 지정 목록)을 씬에 스폰한다."""
+        if objs is None:
+            objs = self.spec.get("objects", [])
+        for o in objs:
             msg = DummyObject()
             msg.header.frame_id = "map"
             msg.header.stamp = self.get_clock().now().to_msg()
@@ -261,7 +263,7 @@ class ScenarioRunner(Node):
             self.get_logger().info(
                 f"객체 스폰: label={msg.classification.label} ({o['x']:.1f}, {o['y']:.1f}) "
                 f"v={o.get('velocity', 0.0)}")
-        if self.spec.get("objects"):
+        if objs:
             self.spin(2.0)
 
     def publish_signal(self, group_ids, color):
@@ -367,8 +369,14 @@ class ScenarioRunner(Node):
         self.clear_objects()
         self.reinit_localization()
         self.set_route()
-        self.spawn_objects()   # engage 전에 놓는다 — 출발 시점부터 인지가 보고 있어야 한다
+        # 정지 객체는 engage 전에 — 출발 시점부터 인지가 보고 있어야 한다.
+        # 움직이는 객체는 engage 후에 — 스폰 즉시 달리기 시작하므로, engage 대기(10초 안팎)
+        # 동안 도망가 버린다. 실측: 앞차가 차간 27→52 m 로 벌어져 추종 구간이 아예 없었다.
+        static_objs = [o for o in self.spec.get("objects", []) if not o.get("velocity")]
+        moving_objs = [o for o in self.spec.get("objects", []) if o.get("velocity")]
+        self.spawn_objects(static_objs)
         self.engage()
+        self.spawn_objects(moving_objs)
         arrived, elapsed = self.drive()
         if arrived:
             self.get_logger().info(f"완주 — {elapsed:.1f} s")

@@ -17,6 +17,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 
 from nav_msgs.msg import Odometry
+from autoware_perception_msgs.msg import PredictedObjects
 from tier4_metric_msgs.msg import MetricArray
 from autoware_adapi_v1_msgs.msg import OperationModeState, RouteState, VelocityFactorArray
 
@@ -49,6 +50,15 @@ class MetricsCollector(Node):
             lambda m: self.on_metrics(m, "control"), 10)
         self.create_subscription(
             Odometry, "/localization/kinematic_state", self.on_odom, 10)
+
+        # 인지 객체를 개별로 남긴다. closest_object_distance 는 "모든 객체 중 최근접"
+        # 스칼라라 앞차 추종 실험에서 NPC 교통이 섞여 앞차만의 차간을 알 수 없었다.
+        # uuid 앞 8자리로 객체를 구분해 자차 기준 거리·속도를 기록한다.
+        # 60 m 밖 객체는 버린다 — 9.2 Hz × 수십 객체를 다 적으면 CSV 가 불필요하게 커진다.
+        self.ego_xy = None
+        self.create_subscription(
+            PredictedObjects, "/perception/object_recognition/objects",
+            self.on_objects, 10)
 
         # 정지 사유. 모듈별 /planning/planning_factors/* 가 41개 있지만,
         # ADAPI 가 그것들을 하나로 모아준다 — behavior 에 모듈 이름이 들어온다.
@@ -135,8 +145,25 @@ class MetricsCollector(Node):
         # 1=STOP 2=AUTONOMOUS 3=LOCAL 4=REMOTE
         self.write(msg.stamp, "system", "operation_mode", msg.mode)
 
+    def on_objects(self, msg):
+        if self.ego_xy is None:
+            return
+        ex, ey = self.ego_xy
+        for o in msg.objects:
+            pos = o.kinematics.initial_pose_with_covariance.pose.position
+            d = math.hypot(pos.x - ex, pos.y - ey)
+            if d > 60.0:
+                continue
+            oid = bytes(o.object_id.uuid[:4]).hex()
+            tw = o.kinematics.initial_twist_with_covariance.twist.linear
+            label = o.classification[0].label if o.classification else 0
+            self.write(msg.header.stamp, "object", f"{oid}/dist", f"{d:.2f}")
+            self.write(msg.header.stamp, "object", f"{oid}/speed", f"{math.hypot(tw.x, tw.y):.2f}")
+            self.write(msg.header.stamp, "object", f"{oid}/label", label)
+
     def on_odom(self, msg):
         p = msg.pose.pose.position
+        self.ego_xy = (p.x, p.y)
         self.write(msg.header.stamp, "ego", "x", f"{p.x:.4f}")
         self.write(msg.header.stamp, "ego", "y", f"{p.y:.4f}")
         self.write(msg.header.stamp, "ego", "yaw", f"{yaw_from_quaternion(msg.pose.pose.orientation):.6f}")
