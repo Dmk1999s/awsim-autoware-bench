@@ -39,11 +39,14 @@ from autoware_adapi_v1_msgs.srv import (
     ClearRoute, ChangeOperationMode, InitializeLocalization, SetRoutePoints,
 )
 
-# AWSIM 메뉴(☰)의 버튼 좌표. 창 크기가 고정이라 좌표도 고정이다.
-# ROS 인터페이스가 없어 GUI 를 누르는 수밖에 없다.
-AWSIM_EGO_RESET_XY = (566, 504)      # Ego Vehicle 리셋 — 스폰 좌표로 복귀
-AWSIM_TRAFFIC_RESET_XY = (643, 611)  # Traffic 리셋 — 시드대로 NPC 재배치
+# AWSIM 메뉴(☰)의 버튼 위치. ROS 인터페이스가 없어 GUI 를 누르는 수밖에 없다.
+# 좌표는 **창 좌상단 기준 상대값**이다 — 절대좌표로 박아두면 창을 최대화하거나 옮긴 순간
+# 클릭이 3D 화면에 떨어지고, 리셋이 조용히 실패한다. 그러면 차가 지난 주행의 도착지에
+# 선 채로 다음 회차가 시작돼 "0.0 초 완주"가 성공으로 기록된다 (실측 8회차 손실).
+AWSIM_EGO_RESET_REL = (115, 318)      # Ego Vehicle 의 ↻ — 스폰 좌표로 복귀
+AWSIM_TRAFFIC_RESET_REL = (194, 426)  # Traffic Control 의 ↻ — 시드대로 NPC 재배치
 AWSIM_DISPLAY = ":20"
+MIN_STRAIGHT_M = 20.0                 # 목적지가 이보다 가까우면 리셋 실패를 의심한다
 
 MAP_OSM = "/root/awsim/nishishinjuku_autoware_map/lanelet2_map.osm"
 # 미션 플래너는 짧은 경로가 불가능하면 거부하지 않고 우회를 조용히 받아들인다.
@@ -189,8 +192,22 @@ class ScenarioRunner(Node):
 
     # ---- 절차 ----
 
-    def _click(self, xy):
-        subprocess.run(["xdotool", "mousemove", str(xy[0]), str(xy[1]), "click", "1"],
+    def _awsim_origin(self):
+        """AWSIM 창의 좌상단. 창을 옮기거나 최대화해도 버튼을 제대로 누르기 위한 것."""
+        env = {"DISPLAY": AWSIM_DISPLAY, "PATH": "/usr/bin:/bin"}
+        wid = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "AWSIM Labs"],
+                             env=env, capture_output=True, text=True, check=True)
+        ids = wid.stdout.split()
+        if not ids:
+            raise RuntimeError("AWSIM 창을 찾지 못했다 — 시뮬레이터가 떠 있는지 확인할 것")
+        geo = subprocess.run(["xdotool", "getwindowgeometry", "--shell", ids[0]],
+                             env=env, capture_output=True, text=True, check=True)
+        vals = dict(line.split("=", 1) for line in geo.stdout.splitlines() if "=" in line)
+        return int(vals["X"]), int(vals["Y"])
+
+    def _click(self, rel):
+        ox, oy = self._awsim_origin()
+        subprocess.run(["xdotool", "mousemove", str(ox + rel[0]), str(oy + rel[1]), "click", "1"],
                        env={"DISPLAY": AWSIM_DISPLAY, "PATH": "/usr/bin:/bin"}, check=True)
 
     def reset_ego(self):
@@ -200,9 +217,9 @@ class ScenarioRunner(Node):
         회차마다 조건이 다르다. 실제로 교통을 두고 5회 돌렸을 때 주행 시간이
         40.3~65.1 s (폭 24.8 s) 로 흔들렸고, 그 폭이 파라미터 효과를 덮을 만큼 컸다.
         """
-        self._click(AWSIM_TRAFFIC_RESET_XY)
+        self._click(AWSIM_TRAFFIC_RESET_REL)
         self.spin(1.0)
-        self._click(AWSIM_EGO_RESET_XY)
+        self._click(AWSIM_EGO_RESET_REL)
         self.get_logger().info("AWSIM 리셋 (교통 + ego)")
         self.spin(5.0)
 
@@ -250,7 +267,12 @@ class ScenarioRunner(Node):
         length = sum(L.get(i, 0.0) for i in ids)
         a, b = self.route.start_pose.position, self.route.goal_pose.position
         straight = math.hypot(b.x - a.x, b.y - a.y)
-        ratio = length / straight if straight > 1.0 else 0.0
+        if straight < MIN_STRAIGHT_M:
+            self.call("clear", ClearRoute.Request())
+            raise RuntimeError(
+                f"출발지와 목적지가 {straight:.1f} m 밖에 안 떨어져 있다 — "
+                f"AWSIM 리셋이 실패해 차가 지난 주행의 도착지에 서 있을 수 있다")
+        ratio = length / straight
         self.get_logger().info(
             f"경로 {len(ids)} lanelet / {length:.0f} m — 직선 {straight:.0f} m ({ratio:.1f}배)")
         limit = self.spec.get("max_route_ratio", MAX_ROUTE_RATIO)
