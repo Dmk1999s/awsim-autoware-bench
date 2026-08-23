@@ -19,7 +19,9 @@ from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 from nav_msgs.msg import Odometry
 from autoware_perception_msgs.msg import PredictedObjects
 from tier4_metric_msgs.msg import MetricArray
-from autoware_adapi_v1_msgs.msg import OperationModeState, RouteState, VelocityFactorArray
+from autoware_adapi_v1_msgs.msg import (
+    OperationModeState, RouteState, SteeringFactorArray, VelocityFactorArray,
+)
 from autoware_internal_planning_msgs.msg import PlanningFactorArray
 
 
@@ -66,6 +68,13 @@ class MetricsCollector(Node):
         self.create_subscription(
             VelocityFactorArray, "/api/planning/velocity_factors",
             self.on_velocity_factors, 10)
+
+        # 「왜 섰는가」의 짝. 차가 옆으로 비키는 이유(회전·차선변경·회피)는 velocity_factors
+        # 에 안 나온다. 실측: 04 추종 한 회차가 옆 차선(280)을 왕복하며 횡편차가 두 배로
+        # 튀었는데, 기록된 factor 는 전부 속도 쪽이라 무엇이 시킨 일인지 알 수 없었다 (§36).
+        self.create_subscription(
+            SteeringFactorArray, "/api/planning/steering_factors",
+            self.on_steering_factors, 10)
 
         # 자체 모듈은 위 집계에 안 잡힌다 — ADAPI 의 구독 목록이 소스에 하드코딩돼 있고
         # (autoware_default_adapi_universe/src/planning.cpp) 거기에 없는 토픽은 그냥 빠진다.
@@ -148,6 +157,19 @@ class MetricsCollector(Node):
             name = f.behavior or "unknown"
             self.write(msg.header.stamp, "factor", f"{name}/status", f.status)
             self.write(msg.header.stamp, "factor", f"{name}/distance", f"{f.distance:.3f}")
+
+    def on_steering_factors(self, msg):
+        """어느 모듈이 어느 쪽으로 비키게 하는지.
+
+            t, steer, <behavior>/status,    1=접근 3=수행중
+            t, steer, <behavior>/direction, 1=좌 2=우 3=직진
+            t, steer, <behavior>/distance,  시작점까지 [m]
+        """
+        for f in msg.factors:
+            name = f.behavior or "unknown"
+            self.write(msg.header.stamp, "steer", f"{name}/status", f.status)
+            self.write(msg.header.stamp, "steer", f"{name}/direction", f.direction)
+            self.write(msg.header.stamp, "steer", f"{name}/distance", f"{f.distance[0]:.3f}")
 
     def on_planning_factors(self, msg):
         """자체 모듈의 factor. 제한 속도(velocity)까지 남긴다 — 모듈이 실제로 얼마를
