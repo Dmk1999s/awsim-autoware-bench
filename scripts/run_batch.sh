@@ -4,6 +4,10 @@
 # 반복의 목적은 "같은 조건에서 얼마나 흔들리는가"를 재는 것이다.
 # 이 편차를 모르면 파라미터를 바꿨을 때 그 차이가 의미 있는지 판단할 수 없다.
 set -eo pipefail
+# 배치가 조용히 죽는 일이 있었다 — 회차는 완주했는데 목록에 안 적히고 프로세스가 사라졌다.
+# set -e 는 죽은 자리를 안 알려주므로, 어디서 왜 끝났는지 남긴다.
+trap 'rc=$?; [ $rc -ne 0 ] && echo "!! run_batch 종료: 라인 $LINENO, 코드 $rc" >&2' EXIT
+
 SCENARIO="$1"; N="${2:-5}"; TAG="${3:-$(basename "$SCENARIO" .yaml)}"
 OUT=/workspace/runs/batch_${TAG}.txt
 : > "$OUT"
@@ -30,8 +34,11 @@ for i in $(seq 1 "$N"); do
   RC=${PIPESTATUS[0]}
   set -e
   sleep 4
-  AFTER=$(ls -1 /workspace/runs/run_*.csv 2>/dev/null | wc -l)
-  NEW=$(ls -1t /workspace/runs/run_*.csv 2>/dev/null | head -1)
+  # 파이프 안에서 head 가 먼저 닫히면 pipefail+set -e 로 스크립트가 죽을 수 있다.
+  # 실패해도 배치는 계속돼야 하므로 실패를 흡수한다.
+  AFTER=$(ls -1 /workspace/runs/run_*.csv 2>/dev/null | wc -l || true)
+  NEW=$(ls -1t /workspace/runs/run_*.csv 2>/dev/null | head -1 || true)
+  [ -n "$AFTER" ] || AFTER=$BEFORE
   if [ "$RC" -eq 0 ] && [ "$AFTER" -gt "$BEFORE" ]; then
     echo "$NEW" >> "$OUT"
     echo "  → $(basename "$NEW")"
