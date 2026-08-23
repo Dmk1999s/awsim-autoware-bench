@@ -41,6 +41,9 @@
       개별 객체 기록(`/perception/object_recognition/objects`)이 다음 확장 (WORKLOG 8)
 - [x] **실험 4 · 교차로 좌회전** — 완주 + intersection factor 확인.
       부산물: 신호 arbiter 는 충돌 시 빨강 우선 (WORKLOG 9)
+- [x] **실험 5 · 우회전** — 보호 우회전(lanelet 332) 3회 완주, 양보 우회전(lanelet 405)에서
+      gap acceptance 관측: 23 m 앞 `collision stop` 삽입 → 0.6 s 만에 해제 (WORKLOG 11).
+      발견: 양보 의무는 좌측통행이 아니라 지도 right_of_way 규제요소의 역할이 정한다
 
 관련 지도 정보 (조사 완료): 신호등 regulatory element **164개**, `turn_direction` 보유 lanelet **387개**
 (left 103 / straight 149 / right 135), 전체 lanelet 979개.
@@ -53,8 +56,10 @@
 - [x] 러너 — 리셋 → 위치추정 재초기화(오차 검증) → 경로 → engage → 도착 (`scenario_runner.py`)
 - [x] 배치 실행 (`run_batch.sh`, 러너 종료코드로 성공 판정) + A/B (`run_ab.sh`)
 - [x] 파라미터 전후 비교 1건 (mpc_weight_lat_error)
-- [ ] 앞차 특정 차간 추적 — 개별 객체 기록 추가
-- [ ] 우회전(대향차 횡단) 시나리오 — intersection 모듈의 gap acceptance 관찰
+- [x] 앞차 특정 차간 추적 — 개별 객체 기록 추가 (WORKLOG 8b)
+- [x] 우회전 시나리오 2종 — `06`(보호 회전, 대조군) / `07`(양보 회전, gap acceptance)
+- [x] 경로 길이 검증 — 직선거리의 3.0배를 넘으면 출발 전 중단 (WORKLOG 11)
+- [ ] 간격이 좁아 실제로 **멈추는** 회차 확보 — 반복 실행 또는 대향차 타이밍 스폰
 
 ---
 
@@ -86,10 +91,9 @@
 
 ## README에 넣을 것
 
-- [ ] 지도 선택 이유 한 줄 — AWSIM 공식 샘플 맵(도쿄 니시신주쿠), 좌측통행은 지도 데이터 속성
-- [ ] **트러블슈팅 섹션** — `PROGRESS.md`의 환경 진단 4종 + 호스트 포트 포워딩 진단.
-      튜토리얼 따라한 사람은 쓸 수 없는 내용이라 차별점이 된다
-- [ ] "무엇을 바꿨고 무엇을 측정했는가"를 한 줄로
+- [x] 지도 선택 이유 한 줄 — AWSIM 공식 샘플 맵(도쿄 니시신주쿠), 좌측통행은 지도 데이터 속성
+- [x] **트러블슈팅 섹션** — `PROGRESS.md`의 환경 진단 4종 + 호스트 포트 포워딩 진단
+- [x] "무엇을 바꿨고 무엇을 측정했는가"를 한 줄로
 
 ---
 
@@ -103,6 +107,9 @@
 - **`Views` Target Frame** — `viewer`로 바뀌면 카메라가 차를 안 따라간다. `base_link`로 되돌릴 것
 - **목적지 클릭 거부** — `Goal's footprint exceeds lane!`. 드래그 방향을 차선과 나란히,
   넓은 직선 차선 중앙을 고를 것
+- **재기동 후 주행 불가 4종** — 러너에는 전부 `자율주행 준비 60s 초과` 로만 보인다.
+  원인과 진단 경로는 WORKLOG 12. 특히 **속도 상한 발행자가 없으면 계획이 통째로 멈춘다**
+  (`scripts/start_velocity_limit.sh` 를 기동 절차에 넣은 이유)
 
 ---
 
@@ -113,5 +120,6 @@
 /root/start_autoware.sh &     # 노드 188개까지 1~2분
 /root/start_display21.sh      # :21 + noVNC (비밀번호 /root/.vnc21passwd.txt)
 /root/start_rviz21.sh &       # :21 에 RViz
+bash /workspace/scripts/start_velocity_limit.sh   # 속도 상한 — 없으면 trajectory 가 안 나온다
 /workspace/run_collector.sh & # 지표 수집
 ```

@@ -20,6 +20,7 @@ import math
 import subprocess
 import time
 import uuid as uuid_lib
+import xml.etree.ElementTree as ET
 
 import rclpy
 import yaml
@@ -32,6 +33,7 @@ from tier4_simulation_msgs.msg import DummyObject
 from autoware_perception_msgs.msg import (
     TrafficLightGroupArray, TrafficLightGroup, TrafficLightElement,
 )
+from autoware_planning_msgs.msg import LaneletRoute
 from autoware_adapi_v1_msgs.msg import OperationModeState, RouteState
 from autoware_adapi_v1_msgs.srv import (
     ClearRoute, ChangeOperationMode, InitializeLocalization, SetRoutePoints,
@@ -43,8 +45,39 @@ AWSIM_EGO_RESET_XY = (566, 504)      # Ego Vehicle 리셋 — 스폰 좌표로 �
 AWSIM_TRAFFIC_RESET_XY = (643, 611)  # Traffic 리셋 — 시드대로 NPC 재배치
 AWSIM_DISPLAY = ":20"
 
+MAP_OSM = "/root/awsim/nishishinjuku_autoware_map/lanelet2_map.osm"
+# 미션 플래너는 짧은 경로가 불가능하면 거부하지 않고 우회를 조용히 받아들인다.
+# 실험 5 에서 직행 150 m 목적지에 97-lanelet 블록 일주가 잡혔고, 400 s 를 다 쓰고서야
+# 실패로 드러났다 (WORKLOG 10). 출발 전에 경로 길이를 직선거리와 대조해 거른다.
+MAX_ROUTE_RATIO = 3.0
+
 LOCALIZATION_TOLERANCE_M = 0.5
 ENGAGE_ATTEMPTS = 5              # 전환이 간헐적으로 거부된다 — 아래 주석 참고   # 정답 대비 이보다 어긋나면 출발시키지 않는다
+
+
+def lanelet_lengths(path):
+    """lanelet id → 길이(m). osm 의 node 가 local_x/local_y 를 들고 있어 투영이 필요 없다.
+    좌·우 경계 길이의 평균을 중심선 길이로 쓴다 — 경로 길이 검증에는 이 정밀도면 된다."""
+    root = ET.parse(path).getroot()
+    pt = {}
+    for n in root.findall("node"):
+        t = {g.get("k"): g.get("v") for g in n.findall("tag")}
+        if "local_x" in t:
+            pt[n.get("id")] = (float(t["local_x"]), float(t["local_y"]))
+    way = {}
+    for w in root.findall("way"):
+        pts = [pt[nd.get("ref")] for nd in w.findall("nd") if nd.get("ref") in pt]
+        way[w.get("id")] = sum(math.dist(a, b) for a, b in zip(pts, pts[1:]))
+    out = {}
+    for r in root.findall("relation"):
+        t = {g.get("k"): g.get("v") for g in r.findall("tag")}
+        if t.get("type") != "lanelet":
+            continue
+        b = [way.get(m.get("ref"), 0.0)
+             for m in r.findall("member") if m.get("role") in ("left", "right")]
+        if b:
+            out[int(r.get("id"))] = sum(b) / len(b)
+    return out
 
 
 class ScenarioRunner(Node):
@@ -64,6 +97,8 @@ class ScenarioRunner(Node):
         self.auto_seq = 0   # 새 메시지인지 가리기 위한 카운터
         self.est = None    # NDT 추정 위치
         self.truth = None  # AWSIM 정답 위치
+        self.route = None
+        self.route_seq = 0  # TRANSIENT_LOCAL 이라 지난 주행의 경로가 먼저 온다 — 새 것만 인정
 
         latched = QoSProfile(
             depth=1,
@@ -74,6 +109,8 @@ class ScenarioRunner(Node):
                                  lambda m: setattr(self, "route_state", m.state), latched)
         self.create_subscription(
             OperationModeState, "/api/operation_mode/state", self.on_operation_mode, latched)
+        self.create_subscription(LaneletRoute, "/planning/mission_planning/route",
+                                 self.on_route, latched)
         self.create_subscription(Odometry, "/localization/kinematic_state",
                                  self.on_kinematic, 10)
         # AWSIM 의 정답 위치는 BEST_EFFORT 로 발행된다. 기본값(RELIABLE)으로 구독하면
@@ -110,6 +147,10 @@ class ScenarioRunner(Node):
     def on_kinematic(self, msg):
         self.est = msg.pose.pose.position
         self.est_vel = msg.twist.twist.linear.x
+
+    def on_route(self, msg):
+        self.route = msg
+        self.route_seq += 1
 
     def on_operation_mode(self, msg):
         self.auto_available = msg.is_autonomous_mode_available
@@ -190,13 +231,33 @@ class ScenarioRunner(Node):
         req = SetRoutePoints.Request(goal=pose)
         req.header.frame_id = "map"
         req.option.allow_goal_modification = self.spec.get("allow_goal_modification", True)
+        seq0 = self.route_seq
         status = self.call("route", req)
         if not status.success:
             raise RuntimeError(f"경로 설정 거부: code={status.code} {status.message}")
+        self.check_route_length(seq0)
         # routing/state 는 변화할 때만 발행된다. 구독 시점에 받은 지난 주행의 ARRIVED 가
         # 남아 있으면 drive() 가 즉시 "도착"으로 판정한다. 서비스가 성공했으므로 SET 으로 덮는다.
         self.route_state = RouteState.SET
         self.get_logger().info(f"경로 설정 → ({g['x']}, {g['y']})")
+
+    def check_route_length(self, seq0):
+        """잡힌 경로가 직선거리에 비해 터무니없이 길면 출발 전에 세운다."""
+        if not self.wait_until(lambda: self.route_seq > seq0, 20.0, "경로 수신"):
+            raise RuntimeError("경로 메시지가 오지 않음")
+        ids = [seg.preferred_primitive.id for seg in self.route.segments]
+        L = lanelet_lengths(MAP_OSM)
+        length = sum(L.get(i, 0.0) for i in ids)
+        a, b = self.route.start_pose.position, self.route.goal_pose.position
+        straight = math.hypot(b.x - a.x, b.y - a.y)
+        ratio = length / straight if straight > 1.0 else 0.0
+        self.get_logger().info(
+            f"경로 {len(ids)} lanelet / {length:.0f} m — 직선 {straight:.0f} m ({ratio:.1f}배)")
+        limit = self.spec.get("max_route_ratio", MAX_ROUTE_RATIO)
+        if ratio > limit:
+            self.call("clear", ClearRoute.Request())   # 경로를 두고 죽으면 수집기가 계속 기록한다
+            raise RuntimeError(
+                f"경로가 직선거리의 {ratio:.1f}배 (한도 {limit}) — 우회 경로다. 출발하지 않는다")
 
     def engage(self):
         # 경로를 넣은 직후에는 자율주행이 아직 준비되지 않는다. 계획이 trajectory 를

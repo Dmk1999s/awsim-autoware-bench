@@ -1,0 +1,16 @@
+name: 07_right_turn_yield
+description: >
+  대향차에 양보해야 하는 우회전(lanelet 405)에서 intersection 모듈의 gap acceptance 를 본다.
+  06 의 우회전(332)은 지도상 right_of_way 역할이라 양보 대상이 없고, 실제로 intersection
+  모듈이 주행 내내 빈 factor 만 발행했다 (WORKLOG 11). 405 는 right_of_way 규제요소
+  124266~124270 다섯 개에서 모두 yield 역할이다 — 양보 의무가 지도에 적혀 있는 차선.
+  접근 경로 255 → … → 217 → 405 는 전부 후속 연결이라 차선 변경이 필요 없다.
+  신호는 강제하지 않는다. 신호 대기는 실패가 아니다.
+goal: {x: 81583.59, y: 50135.91, z: 34.66, yaw: -1.388}   # lanelet 198 (405 의 다음 차선) 중심선 지점
+timeout_s: 500
+criteria:
+  max:
+    lat_p95: 60.0
+    lat_rms: 30.0
+    settle_t: 200.0
+    jerk_p95: 4.0

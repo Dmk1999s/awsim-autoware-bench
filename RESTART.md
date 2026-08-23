@@ -10,6 +10,7 @@
 > bash /workspace/scripts/start_autoware.sh   # 노드 186개까지 약 90초
 > bash /workspace/scripts/start_display21.sh  # :21 + VNC 5901 + noVNC 6081
 > bash /workspace/scripts/start_rviz21.sh
+> bash /workspace/scripts/start_velocity_limit.sh  # 속도 상한 (없으면 /planning/trajectory 가 안 나온다)
 > bash /workspace/scripts/start_collector.sh  # 지표 수집
 > ```
 >

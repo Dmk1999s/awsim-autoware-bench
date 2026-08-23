@@ -428,3 +428,83 @@ NPC 교통 속에서 관찰하려 했다.
 
 **남은 것.** 우회전 gap acceptance 관찰은 최우측 차선으로 접근 가능한 다른 교차로를
 찾아야 한다. 러너에 "계획된 경로 길이가 직선거리의 N배를 넘으면 중단" 검증을 넣는 것도 후보.
+
+
+### 11. 실험 5 재시도 — 우회전 완주, 그리고 "양보 의무는 지도에 적혀 있다"
+
+앞선 시도(WORKLOG 10)는 목적지 lanelet 490 에 차선 변경 없이 닿을 수 없었고, 미션 플래너가
+거부 대신 97-lanelet 우회를 받아들여 400 s 를 태웠다. 두 가지를 고쳤다.
+
+**조치 1 — 러너가 출발 전에 경로 길이를 검증한다.**
+`/planning/mission_planning/route` 의 lanelet 을 받아 osm 의 좌·우 경계 길이 평균으로
+길이를 합산하고, 경로 시작–목적지 직선거리와 비교한다. 3.0배를 넘으면 출발하지 않는다
+(시나리오의 `max_route_ratio` 로 덮어쓸 수 있다). osm 의 node 가 `local_x/local_y` 를
+들고 있어 투영도 lanelet2 라이브러리도 필요 없다.
+
+| 시나리오 | 경로 | 직선 | 비 |
+|---|---:|---:|---:|
+| 01 직진 | 145 m | 109 m | 1.3배 |
+| 05 좌회전 | 214 m | 119 m | 1.8배 |
+| 06 우회전(수정 후) | 343 m | 266 m | 1.3배 |
+| 07 양보 우회전 | 594 m | 297 m | 2.0배 |
+| **06 구버전(실패했던 목적지)** | **1110 m** | **93 m** | **11.9배** |
+
+전후: 우회 경로가 **400 s 시간 초과 → 15 s 중단**. 중단할 때 `clear_route` 를 부른다 —
+경로를 둔 채 죽으면 수집기가 도착도 해제도 못 보고 계속 기록한다(첫 시험에서 실측).
+
+**조치 2 — 진입 가능한 우회전을 지도에서 찾았다.** 스폰 lanelet 255 에서 후속(successor)
+연결만 따라가는 BFS: 도달 532 lanelet, 그중 `turn_direction=right` 75개. 가장 가까운 것이
+lanelet 332(홉 4). 접근 경로 255 → 570 → 246 → 247 → 332 은 전부 후속 연결이라
+차선 변경이 필요 없다. 이 목적지로 3회 완주했다 (124.5 / 133.8 / 141.3 s, yaw 99° → 10°).
+
+**그런데 intersection 모듈이 한 번도 개입하지 않았다.** 모듈 자체 토픽
+`/planning/planning_factors/intersection` 을 주행 내내 받아보니 1644개 메시지가 **전부 빈
+배열**이었다. 대향차가 없어서가 아니다 — 2회차에서는 회전 중 14.6 m/s 차량이 2.8 m 까지
+접근했는데도 빈 채였다.
+
+**이유는 지도에 있었다.** right_of_way 규제요소 123838 에서 lanelet 332 는 `yield` 가
+아니라 **`right_of_way` 역할**이다(양보 대상은 449·337·498·450·124555). 즉 이 우회전은
+지도상 **보호된 회전**이고, 양보 의무가 없으니 모듈이 세울 이유도 없다.
+"우회전이면 대향차를 횡단하니 gap acceptance 가 보이겠지"는 틀린 가정이었다 —
+좌측통행이라는 사실이 아니라 **그 차선이 규제요소의 어느 역할에 들어 있는지**가 정한다.
+
+**조치 3 — 양보 역할인 우회전으로 시나리오를 다시 짰다 (`07_right_turn_yield`).**
+도달 가능한 우회전 75개 중 `yield` 역할인 것은 35개. 그중 가장 가까운 lanelet 405
+(규제요소 124266~124270 다섯 개 모두에서 yield)로 목적지를 잡았다.
+
+**결과 — gap acceptance 가 관측됐다.** 201.3 s 완주, 판정 PASS(시나리오 기준).
+intersection factor 가 두 번, 각각 0.6 s 남짓 등장했다가 사라진다:
+
+| 시각 | 정지점 | 거리 | detail |
+|---|---|---:|---|
+| t=6.3~6.7 s | (81397.7, 49930.5) 좌회전 교차로 | 18.5 → 17.8 m | `collision stop` |
+| **t=167.1~167.5 s** | **(81561.9, 50197.6) 우회전 교차로** | **23.1 → 22.4 m** | **`collision stop`** |
+
+두 번째가 목표하던 장면이다. 빨간불 해제(t=163.7) 후 가속하던 중(1.3 → 3.7 m/s)
+모듈이 23 m 앞에 정지점을 꽂았다가 0.6 s 만에 거뒀고, 차는 멈추지 않고 회전했다
+(t=174~182, yaw 9° → −59°, 회전 중 대향차 최근접 11.4 m). 충돌 위험을 평가 →
+간격이 열리자 해제하는 과정이 그대로 남았다.
+
+**남은 것.** 간격이 좁아 실제로 **멈추는** 회차는 아직 못 잡았다. 반복 실행으로 교통이
+빽빽한 회차를 노리거나, 대향 차선에 더미 차량을 회전 직전 타이밍에 스폰하는 기능이 후보다.
+
+
+### 12. 스택 재시작이 드러낸 실패 4종 — 전부 "조용히" 자율주행을 막는다
+
+실험 도중 behavior_planning 이 죽어 스택을 재기동했더니, 러너에는 똑같이
+`자율주행 준비 60s 초과` 한 줄로만 보이는 서로 다른 원인이 연달아 나왔다. 증상이 같아
+구분이 어려우므로 진단 경로를 적어둔다.
+
+| # | 실제 원인 | 확인 방법 | 조치 |
+|---|---|---|---|
+| 1 | `behavior_planning_container` SIGABRT — 새 경로 수신 직후 `failed to add guard condition to wait set` (Autoware 상류 버그). 로그: "New uuid route is received. Resetting modules." 바로 다음 줄 | launch 로그 `process has died` | 스택 재기동 |
+| 2 | 재기동 시 **노드 1개가 조용히 로드 실패** — `/system/mrm_comfortable_stop_operator`. 그러면 mrm_handler 침묵 → `/system/fail_safe/mrm_state` 없음 → `vehicle_cmd_gate` 가 `emergency_state_heartbeat_received_time_ is false` 로 **control_cmd 를 아예 안 낸다** | 이전 launch 로그와 `Loaded node` 목록 diff (90개 → 89개) | `ros2 component load` 로 수동 적재 (remap 인자는 **따옴표 필수** — `~/` 를 bash 가 홈으로 펼친다) |
+| 3 | `max_velocity_default` 발행자 0 → external_velocity_limit_selector 침묵 → velocity_smoother 침묵 → `/planning/trajectory` 없음. 원래 발행자는 **RViz 의 속도 패널**이라 RViz 없이 재기동하면 이렇게 된다 | `ros2 topic info` 로 발행자 수 0 확인 | `scripts/start_velocity_limit.sh` (4.17 m/s = selector 기본 max_vel, 과거 회차와 비교 가능하도록 같은 값) |
+| 4 | 구 스택 잔존 프로세스 2개(`robot_state_publisher`, `traffic_light_camera_info_relay`) — 이름이 `/root/autoware/install` 경로가 아니라 pkill 패턴에서 빠졌다 → `duplicated_node_checker` ERROR 로 자율주행 차단 | `ros2 node list \| sort \| uniq -d` | 구 프로세스만 골라 kill |
+
+공통 진단 순서: **① 무엇이 자율주행을 막는지**는 launch 로그의
+`The target mode is not available for the following reasons:` 블록이 이름까지 찍어준다.
+**② 계획 파이프라인이 어디서 끊겼는지**는 상류부터 `ros2 topic hz` —
+`path_with_lane_id` → `lane_driving/trajectory` → `scenario_selector/trajectory` →
+`velocity_smoother/trajectory` → `/planning/trajectory` → `/control/command/control_cmd`.
+3번이 딱 이 방법으로 잡혔다 (스무더 입력은 흐르는데 출력이 없었다).

@@ -1,15 +1,14 @@
 name: 06_right_turn
 description: >
-  스폰 → 첫 신호 교차로에서 우회전(lanelet 490 — 좌측통행이므로 대향차 횡단) → 남동행 도로
-  (lanelet 266) 중간 도착. NPC 교통이 흐르는 상태에서 intersection 모듈의 대향차
-  gap acceptance 가 factor 로 찍히는지 본다.
-  신호는 1487·1488(우회전 차선 참조)·1489 초록 강제 — 단, arbiter 는 카메라가 빨강을 보면
-  빨강을 택하므로(WORKLOG 9) 자연 빨강 대기가 섞일 수 있다. 정지 자체는 실패가 아니다.
-goal: {x: 81442.76, y: 49849.05, z: 41.06, yaw: -1.136}   # lanelet 266 실제 중심선 50% 지점 (끝점 평균은 곡선 도로라 10 m 벗어남)
+  스폰 → 좌회전 교차로 통과 → 그다음 신호 교차로에서 우회전(lanelet 332 — 좌측통행이므로
+  대향차를 횡단) → 회전 후 약 50 m 지점 도착. NPC 교통이 흐르는 상태에서 intersection
+  모듈의 대향차 gap acceptance 가 factor 로 찍히는지 본다.
+  접근 경로 255 → 570 → 246 → 247 → 332 은 전부 후속(successor) 연결이라 차선 변경이
+  필요 없다 — 앞선 시도(lanelet 490)가 막힌 이유가 이것이었다 (WORKLOG 10).
+  신호는 강제하지 않는다. arbiter 가 카메라 빨강을 우선하므로 초록 강제는 어차피 무력하고
+  (WORKLOG 9), 자연 신호로 도는 편이 대향차 흐름과 맞다. 신호 대기는 실패가 아니다.
+goal: {x: 81439.24, y: 50178.06, z: 36.40, yaw: 0.183}   # lanelet 124548 70% 지점 (좌·우 경계 같은 비율 지점의 평균 = 중심선)
 timeout_s: 400
-traffic_override:
-  group_ids: [1487, 1488, 1489]
-  color: GREEN
 criteria:
   max:
     lat_p95: 60.0
