@@ -37,6 +37,15 @@ for n in behavior_planning/behavior_path_planner behavior_planning/behavior_velo
   fi
 done
 
+# 2c. motion_planning — behavior_planning 과 같은 방식으로 죽는다 (WORKLOG 41, disc4 07).
+#     죽으면 궤적이 안 나와 「자율주행 준비 60s 초과」로만 보이고, 노드 수 문턱은 넘는다.
+for n in motion_planning/path_optimizer motion_planning/motion_velocity_planner; do
+  if ! echo "$nodes" | grep -q "$n$"; then
+    echo "  ✗ $n 없음 — motion_planning 컨테이너가 죽었다. 스택 재기동이 필요하다"
+    fail=1
+  fi
+done
+
 # 3. mrm_comfortable_stop_operator — 컴포저블 노드 로드가 재기동마다 간헐적으로 실패한다.
 #    빠지면 mrm_handler 침묵 → vehicle_cmd_gate 가 control_cmd 를 아예 안 낸다.
 if ! echo "$nodes" | grep -q "^/system/mrm_comfortable_stop_operator$"; then
