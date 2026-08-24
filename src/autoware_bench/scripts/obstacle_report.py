@@ -53,7 +53,7 @@ def summarize(path, ox, oy):
         return None
     t0 = moving[0]
     app = [(t, d, v) for t, d, v in ego if t >= t0]
-    tmin = min(app, key=lambda r: r[1])[0]
+    tmin, dmin = min(app, key=lambda r: r[1])[:2]
     seg = [(t, d, v) for t, d, v in app if t <= tmin]
 
     # 인지 여부: 그 순간 객체 목록에 기하 거리와 맞는 것이 있는가.
@@ -108,6 +108,7 @@ def summarize(path, ox, oy):
         at[m] = min(cand)[1] if cand else None
     return dict(
         run=path.split("/")[-1].replace("run_", "").replace(".csv", ""),
+        dmin=dmin,
         a_min=min(a_win) if a_win else None,
         j_max=max((abs(j) for j in j_win), default=None),
         v_max=max(v for _, _, v in seg),
@@ -133,12 +134,13 @@ def main():
         return fmt.format(v) if v is not None else "—"
 
     print(f"{'회차':<16}{'인지율':>7}{'가림':>6}{'붙잡은거리':>11}{'최고속':>7}"
-          f"{'최대감속':>9}{'최대저크':>9}{'정지간격':>9}")
+          f"{'최대감속':>9}{'최대저크':>9}{'최종거리':>9}{'정지간격':>9}")
     for r in sorted(rows, key=lambda r: -(r["hold_from"] or 0)):
         print(f"{r['run']:<16}{f(r['seen_frac'] and r['seen_frac']*100, '{:.0f}%'):>7}"
               f"{f(r['occl'] and r['occl']*100, '{:.0f}%'):>6}"
               f"{f(r['hold_from'], '{:.1f} m'):>11}{f(r['v_max']):>7}"
-              f"{f(r['a_min']):>9}{f(r['j_max']):>9}{f(r['stop_gap'], '{:.2f} m'):>9}")
+              f"{f(r['a_min']):>9}{f(r['j_max']):>9}{f(r['dmin'], '{:.1f} m'):>9}"
+              f"{f(r['stop_gap'], '{:.2f} m'):>9}")
 
     def spread(key, sel=None):
         vals = [r[key] for r in (sel or rows) if r[key] is not None]
@@ -151,6 +153,7 @@ def main():
     late = [r for r in rows if r["hold_from"] is not None and r["hold_from"] < 25]
     print(f"\n  전체 {len(rows)}회")
     for label, key in [("최대 감속 [m/s²]", "a_min"), ("최대 저크 [m/s³]", "j_max"),
+                       ("최종 접근거리 [m]", "dmin"),
                        ("정지 간격 [m]", "stop_gap"), ("접근 최고속 [m/s]", "v_max")]:
         print(f"    {label:<18} {spread(key)}")
     for name, sel in [("25 m 밖에서 붙잡은 회차", early), ("25 m 안에서야 붙잡은 회차", late)]:

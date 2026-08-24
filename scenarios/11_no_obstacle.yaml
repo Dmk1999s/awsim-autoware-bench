@@ -1,0 +1,11 @@
+name: 11_no_obstacle
+description: >
+  09 에서 장애물만 뺐다. 경로·신호 통제(1489 초록 고정)·판정은 그대로.
+  군집 채널을 켰을 때 09 가 교차로 정지선에서 멈춰 서 있던 것이 「교차물 때문」인지
+  「이 경로의 교차로 자체」인지를 가른다. 여기서 완주하면 장애물이 원인이다 (WORKLOG 38).
+  장애물이 없으므로 도착이 정상 결과다 — stop_hold_s 를 두지 않는다.
+goal: {x: 81470.3, y: 49980.1, z: 41.5, yaw: 0.60}
+timeout_s: 90
+traffic_override:
+  group_ids: [1489]
+  color: GREEN

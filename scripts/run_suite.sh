@@ -20,7 +20,9 @@ mkdir -p "$OUT"
 LOG="$OUT/run.log"
 : > "$LOG"
 
-SCENARIOS=(01_straight 02_obstacle 03_traffic_light 04_follow 05_left_turn 06_right_turn 07_right_turn_yield)
+# 09 는 도착하지 않는 시나리오다 — 장애물 앞 8초 정지가 성공이다 (WORKLOG 31).
+SCENARIOS=(01_straight 02_obstacle 03_traffic_light 04_follow 05_left_turn 06_right_turn
+           07_right_turn_yield 09_obstacle_approach)
 
 echo "# 시나리오 스위트 — $(date -u +%Y-%m-%d\ %H:%M) UTC, 각 ${N}회" | tee "$OUT/summary.md"
 echo "" >> "$OUT/summary.md"

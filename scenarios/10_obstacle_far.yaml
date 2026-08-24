@@ -1,0 +1,17 @@
+name: 10_obstacle_far
+description: >
+  09 와 같은 경로·같은 신호 통제인데 장애물만 30 m 더 멀리 둔다 (출발점에서 80 m).
+  09 에서 군집 채널을 켜자 자차가 교차로 정지선(출발점 20 m)에 서서 움직이지 않았다.
+  장애물이 교차로 너머 30 m 에 있었기 때문인지, 아니면 교차로 자체가 막힌 것인지를
+  이 시나리오가 가른다 — 멀리 두면 풀린다면 거리에 걸린 규칙이다 (WORKLOG 38).
+goal: {x: 81470.3, y: 49980.1, z: 41.5, yaw: 0.60}
+timeout_s: 90
+stop_hold_s: 8
+objects:
+  - {x: 81446.90, y: 49963.80, z: 41.3, yaw: 0.600, label: 1, velocity: 0.0}
+traffic_override:
+  group_ids: [1489]
+  color: GREEN
+criteria:
+  min:
+    mid_stops: 1
